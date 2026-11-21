@@ -1,0 +1,25 @@
+{
+  "indexes": [
+    { "collectionGroup": "emergencyEvents", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "userId", "order": "ASCENDING" }, { "fieldPath": "status", "order": "ASCENDING" } ] },
+    { "collectionGroup": "emergencyEvents", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "userId", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "emergencyEvents", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "userId", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "ASCENDING" } ] },
+    { "collectionGroup": "emergencyResponses", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "eventId", "order": "ASCENDING" }, { "fieldPath": "contactUserId", "order": "ASCENDING" } ] },
+    { "collectionGroup": "notifications", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "recipientUserId", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "notifications", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "recipientUserId", "order": "ASCENDING" }, { "fieldPath": "read", "order": "ASCENDING" } ] },
+    { "collectionGroup": "notifications", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "recipientUserId", "order": "ASCENDING" }, { "fieldPath": "type", "order": "ASCENDING" } ] },
+    { "collectionGroup": "locationSessions", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "ownerId", "order": "ASCENDING" }, { "fieldPath": "status", "order": "ASCENDING" } ] },
+    { "collectionGroup": "locationSessions", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "ownerId", "order": "ASCENDING" }, { "fieldPath": "contactId", "order": "ASCENDING" } ] },
+    { "collectionGroup": "journeySessions", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "userId", "order": "ASCENDING" }, { "fieldPath": "startedAt", "order": "DESCENDING" } ] }
+  ],
+  "fieldOverrides": []
+}
