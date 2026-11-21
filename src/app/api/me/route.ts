@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { phoneSchema, profileUpdateSchema } from "@/core/validation";
-import { requireProfile } from "@/server/auth";
+import { requireProfile, requireRecentLogin } from "@/server/auth";
 import { authed, parseBody } from "@/server/http";
 import { deleteAccount, getOrCreateProfile, updateProfile } from "@/server/services/users";
 
@@ -21,9 +21,10 @@ export const PATCH = authed(async ({ req, auth }) => {
   return { profile: await updateProfile(auth.uid, patch) };
 });
 
-/** Permanently delete account and all owned data. Requires typed confirmation. */
+/** Permanently delete account and all owned data. Requires typed confirmation AND a sign-in in the last 5 minutes. */
 export const DELETE = authed(async ({ req, auth }) => {
   await parseBody(req, z.object({ confirm: z.literal("DELETE") }));
+  requireRecentLogin(auth);
   await deleteAccount(auth.uid);
   return { ok: true };
 });
