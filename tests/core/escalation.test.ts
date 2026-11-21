@@ -3,7 +3,7 @@ import { evaluateEscalation, selectInitialRecipients } from "@/core/escalation";
 import type { TrustedContact } from "@/core/types";
 
 const c = (id: string, priority: "primary" | "secondary", status: TrustedContact["status"] = "accepted"): TrustedContact => ({
-  id, ownerId: "u", name: id, email: null, phone: null, relationship: "x", priority, status, contactUserId: `user_${id}`,
+  id, ownerId: "u", name: id, email: null, phone: null, relationship: "x", priority, status, contactUserId: `user_${id}`, claim: null,
   inviteTokenHash: null, inviteExpiresAt: null, notifyOnEmergency: true, createdAt: "", updatedAt: "",
 });
 

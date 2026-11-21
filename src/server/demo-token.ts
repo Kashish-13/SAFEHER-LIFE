@@ -5,16 +5,21 @@ import { getDemoSecret } from "./env";
 /**
  * Signed demo session tokens: base64url(JSON payload) + "." + HMAC-SHA256.
  * Only accepted while demo mode is enabled. Never used when Firebase is configured.
+ * Payload: uid, iat (issued-at, used as "sign-in time"), exp, v (token version
+ * for sign-out-everywhere).
  */
 const PREFIX = "demo.";
 
-export function signDemoToken(uid: string, ttlSeconds = 60 * 60 * 12): string {
-  const payload = Buffer.from(JSON.stringify({ uid, exp: Math.floor(Date.now() / 1000) + ttlSeconds })).toString("base64url");
+export interface DemoClaims { uid: string; iat: number; v: number }
+
+export function signDemoToken(uid: string, ttlSeconds = 60 * 60 * 12, tokenVersion = 0): string {
+  const iat = Math.floor(Date.now() / 1000);
+  const payload = Buffer.from(JSON.stringify({ uid, iat, exp: iat + ttlSeconds, v: tokenVersion })).toString("base64url");
   const sig = createHmac("sha256", getDemoSecret()).update(payload).digest("base64url");
   return `${PREFIX}${payload}.${sig}`;
 }
 
-export function verifyDemoToken(token: string): { uid: string } | null {
+export function verifyDemoToken(token: string): DemoClaims | null {
   if (!token.startsWith(PREFIX)) return null;
   const [payload, sig] = token.slice(PREFIX.length).split(".");
   if (!payload || !sig) return null;
@@ -22,10 +27,10 @@ export function verifyDemoToken(token: string): { uid: string } | null {
   const given = Buffer.from(sig, "base64url");
   if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
   try {
-    const data = JSON.parse(Buffer.from(payload, "base64url").toString()) as { uid?: unknown; exp?: unknown };
+    const data = JSON.parse(Buffer.from(payload, "base64url").toString()) as { uid?: unknown; exp?: unknown; iat?: unknown; v?: unknown };
     if (typeof data.uid !== "string" || typeof data.exp !== "number") return null;
     if (data.exp < Date.now() / 1000) return null;
-    return { uid: data.uid };
+    return { uid: data.uid, iat: typeof data.iat === "number" ? data.iat : 0, v: typeof data.v === "number" ? data.v : 0 };
   } catch {
     return null;
   }

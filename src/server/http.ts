@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { ZodError, type ZodType } from "zod";
 import type { Role } from "@/core/types";
 import { requireAuth, type AuthContext } from "./auth";
+import { assertServerConfigured, ConfigError } from "./env";
 import { ApiError, badRequest } from "./errors";
 import { checkRateLimit, RATE_LIMITS, type RateLimitRule } from "./rate-limit";
 
@@ -24,6 +25,11 @@ function clientIp(req: NextRequest) {
 }
 
 export function errorResponse(err: unknown) {
+  if (err instanceof ConfigError) {
+    // Details are logged server-side only; clients get a generic message.
+    console.error("[config]", err.problems.join(" | "));
+    return NextResponse.json({ error: { code: "server_misconfigured", message: "SafeHer is not configured correctly on the server. If you are in danger, call 112." } }, { status: 503 });
+  }
   if (err instanceof ApiError) {
     const res = NextResponse.json({ error: { code: err.code, message: err.message, details: err.details } }, { status: err.status });
     if (err.status === 429) res.headers.set("Retry-After", String((err.details as { retryAfterSeconds: number }).retryAfterSeconds));
@@ -50,6 +56,7 @@ export function authed<P extends Params = Params>(
 ) {
   return async (req: NextRequest, routeCtx: { params: Promise<P> }) => {
     try {
+      assertServerConfigured();
       const rule = options.rateLimit ?? (req.method === "GET" ? RATE_LIMITS.default : RATE_LIMITS.write);
       checkRateLimit(`ip:${clientIp(req)}`, { ...rule, limit: rule.limit * 3 }); // coarse per-IP guard
       const auth = await requireAuth(req, options.roles);
@@ -68,6 +75,7 @@ export function authed<P extends Params = Params>(
 export function publicRoute(handler: (req: NextRequest) => Promise<unknown>, rule: RateLimitRule = RATE_LIMITS.auth) {
   return async (req: NextRequest) => {
     try {
+      assertServerConfigured();
       checkRateLimit(`ip:${clientIp(req)}`, rule);
       const result = await handler(req);
       if (result instanceof Response) return result;

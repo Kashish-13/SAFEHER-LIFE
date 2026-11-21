@@ -21,7 +21,7 @@ export async function seedDemoData(store: DataStore) {
   if (await store.get(COLLECTIONS.users, "demo_priya")) return;
   const t = ago(60 * 24 * 14);
 
-  const users: UserProfile[] = [
+  const users: UserProfile[] = ([
     {
       ...newUserProfile({ id: "demo_priya", fullName: "Priya Sharma", email: "priya.demo@safeher.app", phone: "+919800000001", now: t }),
       phoneVerified: true,
@@ -32,19 +32,35 @@ export async function seedDemoData(store: DataStore) {
     { ...newUserProfile({ id: "demo_rajesh", fullName: "Rajesh Sharma", email: "rajesh.demo@safeher.app", phone: "+919800000003", now: t }), roles: ["user", "trusted_contact"], onboardingComplete: true },
     { ...newUserProfile({ id: "demo_meera", fullName: "Meera Iyer", email: "meera.demo@safeher.app", phone: "+919800000004", now: t }), roles: ["user", "trusted_contact"], onboardingComplete: true },
     { ...newUserProfile({ id: "demo_admin", fullName: "SafeHer Admin", email: "admin.demo@safeher.app", now: t }), roles: ["user", "admin"], onboardingComplete: true },
-  ];
+    // Fictional account that used a FORWARDED invitation link. Shows the owner-approval safeguard.
+    { ...newUserProfile({ id: "demo_unknown", fullName: "R. Kumar", email: "rk.forwarded.demo@example.com", now: t }), onboardingComplete: true },
+  ] as UserProfile[]).map((u) => ({ ...u, emailVerified: true }));
 
-  const contact = (id: string, name: string, relationship: string, priority: "primary" | "secondary", userId: string | null, status: TrustedContact["status"] = "accepted"): TrustedContact => ({
-    id, ownerId: "demo_priya", name, relationship, priority, status, contactUserId: userId,
-    email: userId ? `${userId.replace("demo_", "")}.demo@safeher.app` : "kavya.demo@example.com",
-    phone: null, inviteTokenHash: null, inviteExpiresAt: status === "pending" ? new Date(Date.now() + 5 * 86_400_000).toISOString() : null,
-    notifyOnEmergency: true, createdAt: t, updatedAt: t,
-  });
+  const byId = new Map(users.map((u) => [u.id, u]));
+  const claimFor = (uid: string, email: string | null, at: string): TrustedContact["claim"] => {
+    const u = byId.get(uid)!;
+    return {
+      userId: uid, displayName: u.fullName, email: u.email, emailVerified: true, phone: u.phone, phoneVerified: u.phoneVerified,
+      matchesInvite: { email: email ? email === u.email : null, phone: null }, claimedAt: at,
+    };
+  };
+  const contact = (id: string, name: string, relationship: string, priority: "primary" | "secondary", userId: string | null, status: TrustedContact["status"] = "accepted", email?: string): TrustedContact => {
+    const mail = email ?? (userId ? `${userId.replace("demo_", "")}.demo@safeher.app` : "kavya.demo@example.com");
+    return {
+      id, ownerId: "demo_priya", name, relationship, priority, status, contactUserId: status === "accepted" ? userId : null,
+      claim: userId ? claimFor(userId, mail, t) : null,
+      email: mail,
+      phone: null, inviteTokenHash: null, inviteExpiresAt: status === "pending" ? new Date(Date.now() + 5 * 86_400_000).toISOString() : null,
+      notifyOnEmergency: true, createdAt: t, updatedAt: t,
+    };
+  };
   const contacts = [
     contact("tc_demo_anita", "Anita Sharma", "Mother", "primary", "demo_anita"),
     contact("tc_demo_rajesh", "Rajesh Sharma", "Father", "primary", "demo_rajesh"),
     contact("tc_demo_meera", "Meera Iyer", "Best friend", "secondary", "demo_meera"),
     contact("tc_demo_kavya", "Kavya Reddy", "Roommate", "secondary", null, "pending"),
+    // Invitation sent to Rohan, but claimed by a DIFFERENT account. Awaiting Priya's decision.
+    contact("tc_demo_rohan", "Rohan Sharma", "Brother", "secondary", "demo_unknown", "awaiting_approval", "rohan.demo@safeher.app"),
   ];
 
   const circles: EmergencyCircle[] = [
@@ -56,7 +72,9 @@ export async function seedDemoData(store: DataStore) {
     id: "sos_demo_past", userId: "demo_priya", userName: "Priya Sharma", trigger: "manual", status: "resolved",
     location: { ...DEMO_POINT, capturedAt: ago(60 * 24 * 3) }, escalationLevel: 0,
     escalationConfig: { enabled: true, primaryTimeoutSeconds: 60 }, isSimulated: true,
-    authorizedViewerIds: ["demo_anita", "demo_rajesh"], note: "Felt followed near the metro exit. Mother called within a minute.",
+    // Closed 3 days ago → the 24 h contact-access window has passed and the sweep has removed viewers.
+    authorizedViewerIds: [], viewerAccessExpiresAt: ago(60 * 24 * 2 - 18),
+    note: "Felt followed near the metro exit. Mother called within a minute.",
     createdAt: ago(60 * 24 * 3), updatedAt: ago(60 * 24 * 3 - 18), cancelledAt: null, resolvedAt: ago(60 * 24 * 3 - 18),
   };
   const pastResponse = (cid: string, name: string, uid: string, final: "acknowledged" | "delivered"): EmergencyResponse => ({
@@ -83,4 +101,10 @@ export async function seedDemoData(store: DataStore) {
   await store.create(COLLECTIONS.emergencyResponses, pastResponse("tc_demo_anita", "Anita Sharma", "demo_anita", "acknowledged"));
   await store.create(COLLECTIONS.emergencyResponses, pastResponse("tc_demo_rajesh", "Rajesh Sharma", "demo_rajesh", "delivered"));
   for (const s of sessions) await store.create(COLLECTIONS.locationSessions, s);
+  await store.create(COLLECTIONS.notifications, {
+    id: "ntf_demo_rohan_claim", recipientUserId: "demo_priya", type: "invitation_response",
+    title: "Approve R. Kumar as your brother?",
+    body: "Someone accepted the invitation you sent to Rohan Sharma, but their account details don't match what you entered. Only approve if you're sure it's them.",
+    link: "/circle", eventId: null, read: false, isSimulated: true, createdAt: ago(25),
+  });
 }

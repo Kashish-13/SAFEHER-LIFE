@@ -1,6 +1,6 @@
 import { evaluateEscalation, selectInitialRecipients } from "@/core/escalation";
 import { applyStatus, summarizeResponses } from "@/core/notification-status";
-import { canManageEmergency, canViewEmergency, type Principal } from "@/core/permissions";
+import { ACCESS_DENIED_MESSAGES, canManageEmergency, emergencyAccess, viewerAccessExpiry, type Principal } from "@/core/permissions";
 import type { EmergencyCircle, EmergencyEvent, EmergencyResponse, EmergencyTrigger, GeoPoint, TrustedContact, UserProfile } from "@/core/types";
 import { audit } from "../audit";
 import { isDemoMode } from "../env";
@@ -37,6 +37,25 @@ function newResponse(event: EmergencyEvent, c: TrustedContact, tier: "primary" |
     createdAt: now,
     updatedAt: now,
   };
+}
+
+/** True if `contactUserId` is currently an ACCEPTED trusted contact of `ownerId`. */
+async function hasActiveLink(ownerId: string, contactUserId: string): Promise<boolean> {
+  const links = await getStore().query<TrustedContact>(COLLECTIONS.trustedContacts, {
+    where: [where("ownerId", "==", ownerId), where("contactUserId", "==", contactUserId)],
+  });
+  return links.some((l) => l.status === "accepted");
+}
+
+/**
+ * Enforces emergency access (see core/permissions.emergencyAccess): owner always;
+ * alerted contacts only while their link is accepted and within 24 h of closure.
+ */
+export async function assertEmergencyAccess(principal: Principal, event: EmergencyEvent, now = new Date()) {
+  const linkActive = event.userId === principal.uid ? true : await hasActiveLink(event.userId, principal.uid);
+  const access = emergencyAccess(principal, event, { now, linkActive });
+  if (!access.allowed) throw forbidden(ACCESS_DENIED_MESSAGES[access.reason]);
+  return access;
 }
 
 /**
@@ -82,6 +101,7 @@ export async function createEmergency(user: UserProfile, input: CreateEmergencyI
     escalationConfig: user.emergencyPreferences.escalation,
     isSimulated: isDemoMode() || input.trigger === "voice_simulated",
     authorizedViewerIds: recipients.map((c) => c.contactUserId).filter((x): x is string => Boolean(x)),
+    viewerAccessExpiresAt: null,
     note: dryRun ? "Simulated voice trigger test. No contacts were alerted." : input.note ?? null,
     createdAt: now,
     updatedAt: now,
@@ -105,12 +125,14 @@ export async function createEmergency(user: UserProfile, input: CreateEmergencyI
 export async function getEmergency(principal: Principal, id: string) {
   const event = await getStore().get<EmergencyEvent>(COLLECTIONS.emergencyEvents, id);
   if (!event) throw notFound("Emergency not found");
-  if (!canViewEmergency(principal, event)) throw forbidden();
+  const access = await assertEmergencyAccess(principal, event);
+  const isOwner = access.as === "owner";
   const responses = await listResponses(id);
   // When a recipient opens the event, their client has demonstrably received the alert.
-  if (principal.uid !== event.userId) await markDeliveredForRecipient(id, principal.uid);
-  const visible = principal.uid === event.userId ? responses : responses.map((r) => ({ ...r, history: [] }));
-  return { event, responses: visible, summary: summarizeResponses(responses), viewerIsOwner: principal.uid === event.userId };
+  if (!isOwner) await markDeliveredForRecipient(id, principal.uid);
+  // Contacts see statuses but not the per-channel delivery trail.
+  const visible = isOwner ? responses : responses.map((r) => ({ ...r, history: [], failureReason: null }));
+  return { event, responses: visible, summary: summarizeResponses(responses), viewerIsOwner: isOwner };
 }
 
 export async function listResponses(eventId: string) {
@@ -126,17 +148,19 @@ export async function listEmergencyHistory(uid: string) {
   });
 }
 
-/** Alerts addressed to the caller as a trusted contact. */
-export async function listAlertsForContact(uid: string) {
+/** Alerts addressed to the caller as a trusted contact, ONLY those they can still access. */
+export async function listAlertsForContact(uid: string, now = new Date()) {
   const store = getStore();
   const rs = await store.query<EmergencyResponse>(COLLECTIONS.emergencyResponses, { where: [where("contactUserId", "==", uid)] });
-  const withEvents = await Promise.all(
-    rs.map(async (r) => ({ response: r, event: await store.get<EmergencyEvent>(COLLECTIONS.emergencyEvents, r.eventId) })),
-  );
-  return withEvents
-    .filter((x): x is { response: EmergencyResponse; event: EmergencyEvent } => x.event !== null)
-    .sort((a, b) => b.event.createdAt.localeCompare(a.event.createdAt))
-    .slice(0, 50);
+  const linkCache = new Map<string, boolean>();
+  const out: { response: EmergencyResponse; event: EmergencyEvent }[] = [];
+  for (const r of rs) {
+    const event = await store.get<EmergencyEvent>(COLLECTIONS.emergencyEvents, r.eventId);
+    if (!event) continue;
+    if (!linkCache.has(event.userId)) linkCache.set(event.userId, await hasActiveLink(event.userId, uid));
+    if (emergencyAccess({ uid, roles: [] }, event, { now, linkActive: linkCache.get(event.userId)! }).allowed) out.push({ response: r, event });
+  }
+  return out.sort((a, b) => b.event.createdAt.localeCompare(a.event.createdAt)).slice(0, 50);
 }
 
 /** Recipient's client fetched the alert → "delivered" (only from "sent"). */
@@ -157,6 +181,7 @@ export async function respondToEmergency(principal: Principal, eventId: string, 
   const store = getStore();
   const event = await store.get<EmergencyEvent>(COLLECTIONS.emergencyEvents, eventId);
   if (!event) throw notFound("Emergency not found");
+  await assertEmergencyAccess(principal, event);
   const [response] = await store.query<EmergencyResponse>(COLLECTIONS.emergencyResponses, {
     where: [where("eventId", "==", eventId), where("contactUserId", "==", principal.uid)],
     limit: 1,
@@ -189,11 +214,13 @@ export async function closeEmergency(principal: Principal, eventId: string, acti
   if (!event) throw notFound("Emergency not found");
   if (!canManageEmergency(principal, event)) throw forbidden("Only the person who raised the emergency can close it");
   const now = nowISO();
+  // Contacts keep access for 24 h after closure, for both resolved AND cancelled events.
+  const viewerAccessExpiresAt = viewerAccessExpiry(now);
   const updated = await store.transact<EmergencyEvent>(COLLECTIONS.emergencyEvents, eventId, (cur) => {
     if (cur.status !== "active") return null;
     return action === "cancel"
-      ? { status: "cancelled", cancelledAt: now, updatedAt: now, note: note ?? cur.note }
-      : { status: "resolved", resolvedAt: now, updatedAt: now, note: note ?? cur.note };
+      ? { status: "cancelled", cancelledAt: now, updatedAt: now, viewerAccessExpiresAt, note: note ?? cur.note }
+      : { status: "resolved", resolvedAt: now, updatedAt: now, viewerAccessExpiresAt, note: note ?? cur.note };
   });
   if (!updated) throw conflict("This emergency is already closed");
 
@@ -205,7 +232,7 @@ export async function closeEmergency(principal: Principal, eventId: string, acti
         recipientUserId: r.contactUserId!,
         type: "emergency_update",
         title: action === "cancel" ? `${event.userName} cancelled the emergency alert` : `${event.userName} marked themselves safe`,
-        body: action === "cancel" ? "The alert was cancelled — it may have been triggered by mistake." : "The emergency has been resolved.",
+        body: action === "cancel" ? "The alert was cancelled. It may have been triggered by mistake." : "The emergency has been resolved.",
         link: `/emergency/${eventId}`,
         eventId,
         isSimulated: event.isSimulated,
@@ -214,6 +241,46 @@ export async function closeEmergency(principal: Principal, eventId: string, acti
   );
   await audit(principal.uid, `emergency.${action}`, "emergencyEvent", eventId);
   return updated;
+}
+
+/**
+ * Immediately removes a contact's access to ALL of an owner's emergencies.
+ * Called when the owner blocks/removes them, or when they leave the circle.
+ */
+export async function revokeViewerAccess(ownerId: string, contactUserId: string) {
+  const store = getStore();
+  const events = await store.query<EmergencyEvent>(COLLECTIONS.emergencyEvents, {
+    where: [where("userId", "==", ownerId), where("authorizedViewerIds", "array-contains", contactUserId)],
+  });
+  await Promise.all(
+    events.map((e) =>
+      store.transact<EmergencyEvent>(COLLECTIONS.emergencyEvents, e.id, (cur) => ({
+        authorizedViewerIds: cur.authorizedViewerIds.filter((x) => x !== contactUserId),
+        updatedAt: nowISO(),
+      })),
+    ),
+  );
+  return { revokedEvents: events.length };
+}
+
+/**
+ * Sweep: after the 24 h window, physically removes viewers from closed events so
+ * access is revoked in stored data too, not only by the API's time check.
+ */
+export async function applyAccessExpiry(now = new Date()) {
+  const store = getStore();
+  const expired = await store.query<EmergencyEvent>(COLLECTIONS.emergencyEvents, {
+    where: [where("viewerAccessExpiresAt", "<=", now.toISOString())],
+    limit: 500,
+  });
+  let revoked = 0;
+  for (const e of expired) {
+    if (e.status === "active" || e.authorizedViewerIds.length === 0) continue;
+    await store.update<EmergencyEvent>(COLLECTIONS.emergencyEvents, e.id, { authorizedViewerIds: [], updatedAt: nowISO() });
+    revoked++;
+  }
+  if (revoked) await audit(null, "emergency.viewer_access_expired", "emergencyEvent", null, { events: revoked });
+  return { revoked };
 }
 
 /**
