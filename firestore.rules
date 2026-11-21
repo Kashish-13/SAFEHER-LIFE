@@ -1,0 +1,80 @@
+rules_version = '2';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SafeHer Firestore Security Rules
+//
+// Architecture: ALL writes go through the SafeHer API (Firebase Admin SDK),
+// which performs validation and authorization in src/server/services/*.
+// The Admin SDK bypasses these rules by design.
+//
+// These rules therefore:
+//   1. deny every client write, and
+//   2. allow narrowly-scoped client READS so future mobile/web clients can use
+//      realtime listeners on their own data,
+//   3. deny everything not explicitly allowed (default deny).
+// ─────────────────────────────────────────────────────────────────────────────
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isUser(uid) { return signedIn() && request.auth.uid == uid; }
+
+    // Own profile only.
+    match /users/{uid} {
+      allow read: if isUser(uid);
+      allow write: if false;
+    }
+
+    // Owner sees their contacts; a linked contact sees the link that points to them.
+    match /trustedContacts/{id} {
+      allow read: if signedIn() && (resource.data.ownerId == request.auth.uid || resource.data.contactUserId == request.auth.uid);
+      allow write: if false;
+    }
+
+    match /emergencyCircles/{id} {
+      allow read: if signedIn() && resource.data.ownerId == request.auth.uid;
+      allow write: if false;
+    }
+
+    // The person in danger, or a contact who was actually alerted for THIS event.
+    match /emergencyEvents/{id} {
+      allow read: if signedIn() && (resource.data.userId == request.auth.uid || request.auth.uid in resource.data.authorizedViewerIds);
+      allow write: if false;
+    }
+
+    match /emergencyResponses/{id} {
+      allow read: if signedIn() && (resource.data.ownerId == request.auth.uid || resource.data.contactUserId == request.auth.uid);
+      allow write: if false;
+    }
+
+    // Owner only. Viewers MUST go through GET /api/location/shared-with-me, which
+    // enforces pause/stop/expiry server-side (expiry can't be reliably checked here).
+    match /locationSessions/{id} {
+      allow read: if signedIn() && resource.data.ownerId == request.auth.uid;
+      allow write: if false;
+    }
+
+    match /journeySessions/{id} {
+      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+      allow write: if false;
+    }
+
+    match /notifications/{id} {
+      allow read: if signedIn() && resource.data.recipientUserId == request.auth.uid;
+      allow write: if false;
+    }
+
+    // Helper profiles contain coarse location: server-only.
+    match /helpers/{id} { allow read, write: if false; }
+    match /assistanceRequests/{id} { allow read, write: if false; }
+    match /voiceRooms/{id} { allow read, write: if false; }
+    match /incidentReports/{id} { allow read, write: if false; }
+    match /evidenceRecords/{id} { allow read, write: if false; }
+
+    // Audit logs are append-only via the server and never client-readable.
+    match /auditLogs/{id} { allow read, write: if false; }
+
+    // Default deny.
+    match /{document=**} { allow read, write: if false; }
+  }
+}
