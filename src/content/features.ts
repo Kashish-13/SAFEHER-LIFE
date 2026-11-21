@@ -16,7 +16,7 @@ export interface Feature {
 export const FEATURES: Feature[] = [
   { icon: Siren, title: "One-tap SOS", body: "A large, unmistakable SOS button with a short cancel window. One trigger alerts your whole circle at the same time.", availability: "web" },
   { icon: Users, title: "Trusted Emergency Circle", body: "Invite family and friends, set primary and secondary contacts, organise circles, and see who has accepted.", availability: "web" },
-  { icon: ShieldAlert, title: "Smart escalation", body: "If no primary contact acknowledges in time, secondary contacts are alerted automatically, exactly once.", availability: "web" },
+  { icon: ShieldAlert, title: "Smart escalation", body: "If no primary contact acknowledges in time, secondary contacts are alerted, exactly once. Currently runs while your emergency screen is open; server-side scheduling is coming next.", availability: "next" },
   { icon: Eye, title: "Honest delivery tracking", body: "See sent, delivered, acknowledged, declined and failed per contact. Never shown before the system confirms it.", availability: "web" },
   { icon: MapPin, title: "Family location sharing", body: "Choose exactly who sees your location: always, for a set time, paused or stopped. Revoke at any moment.", availability: "web" },
   { icon: Car, title: "Safe Journey Guardian", body: "Share your trip, check in along the way. Missed check-ins remind you first, then escalate only if you opted in.", availability: "web" },

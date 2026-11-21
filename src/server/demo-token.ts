@@ -12,8 +12,8 @@ const PREFIX = "demo.";
 
 export interface DemoClaims { uid: string; iat: number; v: number }
 
-export function signDemoToken(uid: string, ttlSeconds = 60 * 60 * 12, tokenVersion = 0): string {
-  const iat = Math.floor(Date.now() / 1000);
+export function signDemoToken(uid: string, ttlSeconds = 60 * 60 * 12, tokenVersion = 0, issuedAtSeconds?: number): string {
+  const iat = issuedAtSeconds ?? Math.floor(Date.now() / 1000);
   const payload = Buffer.from(JSON.stringify({ uid, iat, exp: iat + ttlSeconds, v: tokenVersion })).toString("base64url");
   const sig = createHmac("sha256", getDemoSecret()).update(payload).digest("base64url");
   return `${PREFIX}${payload}.${sig}`;

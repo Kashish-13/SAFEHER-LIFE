@@ -21,11 +21,13 @@ describe("trusted contact invitations", () => {
     expect(body.inviteLink).toMatch(/\/invite\/[\w-]{40,}/);
   });
 
-  it("links the account on acceptance and makes the token single-use", async () => {
+  it("accepting only CLAIMS the invitation (no access) and makes the token single-use", async () => {
     const { body } = await invite({ name: "Priya", relationship: "Friend", email: "priya.demo@safeher.app", priority: "primary" });
     const token = tokenFrom(body.inviteLink);
     const accept = await respondInvite(req("POST", "", { as: "demo_priya", body: { token, decision: "accept" } }), params());
-    expect((await accept.json()).contact).toMatchObject({ status: "accepted", contactUserId: "demo_priya" });
+    const claimed = (await accept.json()).contact;
+    expect(claimed).toMatchObject({ status: "awaiting_approval", contactUserId: null });
+    expect(claimed.claim).toMatchObject({ userId: "demo_priya", displayName: "Priya Sharma", matchesInvite: { email: true } });
     const again = await respondInvite(req("POST", "", { as: "demo_anita", body: { token, decision: "accept" } }), params());
     expect(again.status).toBe(404);
   });

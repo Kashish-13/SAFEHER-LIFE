@@ -1,34 +1,42 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { ConfigProblem } from "@/components/auth/config-problem";
 import { DemoPersonaPicker } from "@/components/auth/demo-persona-picker";
 import { GoogleButton } from "@/components/auth/google-button";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/feedback";
 import { Field, Input } from "@/components/ui/form";
 import { friendlyAuthError, useAuth } from "@/hooks/use-auth";
+import { safeRedirect } from "@/lib/utils";
 
-export default function SignupPage() {
+function SignupInner() {
   const { mode, status, profile, signUpEmail } = useAuth();
   const router = useRouter();
+  const nextParam = useSearchParams().get("next");
+  const safeNext = safeRedirect(nextParam);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (status === "signed_in") router.replace(profile?.onboardingComplete ? "/dashboard" : "/onboarding");
-  }, [status, profile, router]);
+    if (status !== "signed_in" || !profile) return;
+    // Keep the destination (e.g. /invite/…) through onboarding so the invitation isn't lost.
+    router.replace(profile.onboardingComplete ? safeNext : `/onboarding?next=${encodeURIComponent(safeNext)}`);
+  }, [status, profile, router, safeNext]);
 
   return (
     <>
       <h1 className="text-3xl font-bold">Create your SafeHer account</h1>
-      <p className="mt-1.5 text-muted-foreground">Set up your trusted circle in about two minutes.</p>
+      <p className="mt-1.5 text-muted-foreground">
+        {safeNext.startsWith("/invite/") ? "Create an account to respond to your invitation." : "Set up your trusted circle in about two minutes."}
+      </p>
       <div className="mt-8">
         {mode === "demo" ? (
-          <DemoPersonaPicker />
-        ) : mode === "unconfigured" ? (
-          <Alert tone="emergency" title="Authentication is not configured">Set the Firebase environment variables (see .env.example).</Alert>
+          <DemoPersonaPicker redirectTo={safeNext} />
+        ) : mode !== "firebase" ? (
+          <ConfigProblem />
         ) : (
           <form
             className="space-y-4"
@@ -56,7 +64,11 @@ export default function SignupPage() {
           </form>
         )}
       </div>
-      {mode !== "demo" && <p className="mt-6 text-center text-sm text-muted-foreground">Already have an account? <Link href="/login" className="font-semibold text-accent">Sign in</Link></p>}
+      {mode === "firebase" && <p className="mt-6 text-center text-sm text-muted-foreground">Already have an account? <Link href={nextParam ? `/login?next=${encodeURIComponent(safeNext)}` : "/login"} className="font-semibold text-accent">Sign in</Link></p>}
     </>
   );
+}
+
+export default function SignupPage() {
+  return <Suspense><SignupInner /></Suspense>;
 }

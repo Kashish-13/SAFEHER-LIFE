@@ -33,11 +33,14 @@ export default function EmergencyPage() {
   const toast = useToast();
   const { refresh: refreshStatus } = useSafetyStatus();
   const { getCurrent } = useGeolocation();
-  const { data, error, loading, reload } = useApi<EventView>(`/api/emergencies/${id}`, { pollMs: 4000 });
+  // Poll only while the emergency is live; closed events don't change.
+  const [live, setLive] = useState(true);
+  const { data, error, loading, reload } = useApi<EventView>(`/api/emergencies/${id}`, { pollMs: live ? 4000 : undefined });
   const [escalation, setEscalation] = useState<EscalationResult["decision"] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   const active = data?.event.status === "active";
+  useEffect(() => { if (data) setLive(data.event.status === "active"); }, [data]);
   const isOwner = data?.viewerIsOwner;
 
   // Owner's open screen drives the (idempotent) escalation check; the cron job is the backstop.
@@ -171,7 +174,20 @@ export default function EmergencyPage() {
               </CardContent>
             </Card>
           )}
-          {!active && <Badge tone="neutral" className="w-full justify-center py-2">Closed {formatDateTime(event.resolvedAt ?? event.cancelledAt)}</Badge>}
+          {!active && (
+            <div className="space-y-2">
+              <Badge tone="neutral" className="w-full justify-center py-2">Closed {formatDateTime(event.resolvedAt ?? event.cancelledAt)}</Badge>
+              {event.viewerAccessExpiresAt && (
+                <p className="text-center text-xs text-muted-foreground">
+                  {isOwner
+                    ? new Date(event.viewerAccessExpiresAt) > new Date()
+                      ? `Your contacts can view this emergency until ${formatDateTime(event.viewerAccessExpiresAt)}. After that, only you can.`
+                      : "Your contacts' access to this emergency has ended. Only you can view it."
+                    : `Your access to this emergency ends ${formatDateTime(event.viewerAccessExpiresAt)}.`}
+                </p>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>

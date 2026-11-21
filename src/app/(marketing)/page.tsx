@@ -49,7 +49,7 @@ function PhoneMock() {
 const STEPS = [
   { icon: Siren, title: "Trigger once", body: "Press SOS, or (in the native app) say your phrase. A cancel window guards against accidents." },
   { icon: Users, title: "Your circle is alerted together", body: "Every primary contact gets your alert, time and authorised location simultaneously." },
-  { icon: BellRing, title: "Escalates if nobody responds", body: "No acknowledgement in time? Secondary contacts are alerted automatically, without duplicates." },
+  { icon: BellRing, title: "Escalates if nobody responds", body: "No acknowledgement in time? Secondary contacts are alerted, exactly once. In this version the check runs while your emergency screen is open; fully server-side scheduling is in development." },
   { icon: ShieldCheck, title: "Coordinate until you're safe", body: "See who has acknowledged, share live location, call 112, then mark yourself safe." },
 ];
 
@@ -67,7 +67,7 @@ export default function LandingPage() {
             </h1>
             <p className="mt-5 max-w-xl text-lg text-white/70">
               SafeHer turns a single SOS into a coordinated response: your trusted family and friends are alerted at once, see your location
-              with your consent, and escalation kicks in automatically if no one answers.
+              with your consent, and secondary contacts can be alerted if no one answers.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <Button asChild size="lg" variant="accent"><Link href="/signup">Create your safety circle <ArrowRight /></Link></Button>

@@ -1,6 +1,6 @@
 "use client";
 
-import { Ban, Bell, BellOff, MoreVertical, Pencil, Plus, RotateCw, Trash2, UserPlus, Users } from "lucide-react";
+import { Ban, Bell, BellOff, MoreVertical, Pencil, Plus, RotateCw, ShieldAlert, ShieldCheck, Trash2, UserPlus, Users } from "lucide-react";
 import { useState } from "react";
 import type { EmergencyCircle, TrustedContact } from "@/core/types";
 import { CircleFormDialog } from "@/components/circle/circle-form-dialog";
@@ -10,7 +10,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
-import { Badge, EmptyState, ErrorState, LoadingBlock } from "@/components/ui/feedback";
+import { Alert, Badge, EmptyState, ErrorState, LoadingBlock } from "@/components/ui/feedback";
 import { Tabs } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/toast";
 import { useApi } from "@/hooks/use-api";
@@ -18,10 +18,63 @@ import { api } from "@/lib/api-client";
 import { cn, formatDateTime, initials } from "@/lib/utils";
 
 type Tab = "contacts" | "circles" | "incoming";
-interface Incoming { linkId: string; ownerName: string; relationship: string; priority: string; since: string }
+interface Incoming { linkId: string; ownerName: string; relationship: string; priority: string; status: "accepted" | "awaiting_approval"; since: string }
 
-const STATUS_TONE = { pending: "warning", accepted: "success", rejected: "neutral", blocked: "emergency", removed: "neutral" } as const;
-const STATUS_TEXT = { pending: "Invitation pending", accepted: "Accepted", rejected: "Declined", blocked: "Blocked", removed: "Removed" } as const;
+const STATUS_TONE = { pending: "warning", awaiting_approval: "primary", accepted: "success", rejected: "neutral", claim_rejected: "neutral", blocked: "emergency", removed: "neutral" } as const;
+const STATUS_TEXT = { pending: "Invitation pending", awaiting_approval: "Needs your approval", accepted: "Accepted", rejected: "Declined", claim_rejected: "Not approved", blocked: "Blocked", removed: "Removed" } as const;
+
+/** Owner reviews WHO actually used the invitation link before granting any access. */
+function ClaimApprovalCard({ c, onChanged }: { c: TrustedContact; onChanged: () => void }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState<string | null>(null);
+  const claim = c.claim!;
+  const mismatch = claim.matchesInvite.email === false || claim.matchesInvite.phone === false;
+  const matched = claim.matchesInvite.email === true || claim.matchesInvite.phone === true;
+  const decide = async (action: "approve_claim" | "reject_claim") => {
+    setBusy(action);
+    try {
+      await api(`/api/contacts/${c.id}`, { method: "PATCH", body: { action } });
+      toast(action === "approve_claim" ? `${claim.displayName} can now receive your alerts` : "Request rejected. No access was granted.");
+      onChanged();
+    } catch (e) { toast((e as Error).message, "error"); } finally { setBusy(null); }
+  };
+  const Check = ({ ok, label }: { ok: boolean | null; label: string }) =>
+    ok === null ? null : <Badge tone={ok ? "success" : "emergency"}>{ok ? <ShieldCheck /> : <ShieldAlert />}{label} {ok ? "matches" : "doesn't match"}</Badge>;
+
+  return (
+    <Card className={cn("border-2", mismatch ? "border-emergency/40" : "border-primary/30")}>
+      <CardContent className="space-y-4 pt-5">
+        <div className="flex items-start gap-3">
+          <span className="grid size-11 shrink-0 place-items-center rounded-full bg-secondary text-sm font-bold text-primary">{initials(claim.displayName)}</span>
+          <div className="min-w-0 flex-1">
+            <p className="font-semibold">Approve {claim.displayName} as your {c.relationship.toLowerCase()}?</p>
+            <p className="text-xs text-muted-foreground">Accepted the invitation you sent to <strong>{c.name}</strong> · {formatDateTime(claim.claimedAt)}</p>
+          </div>
+        </div>
+        <dl className="grid gap-2 rounded-xl bg-secondary/50 p-3 text-sm sm:grid-cols-2">
+          <div><dt className="text-xs text-muted-foreground">Account name</dt><dd className="font-medium">{claim.displayName}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">Account email</dt><dd className="break-all font-medium">{claim.email ?? "—"} {claim.emailVerified && <Badge tone="success" className="ml-1">verified</Badge>}</dd></div>
+          {claim.phone && <div><dt className="text-xs text-muted-foreground">Account phone</dt><dd className="font-medium">{claim.phone} {claim.phoneVerified && <Badge tone="success" className="ml-1">verified</Badge>}</dd></div>}
+          <div><dt className="text-xs text-muted-foreground">You invited</dt><dd className="break-all font-medium">{c.email ?? c.phone}</dd></div>
+        </dl>
+        <div className="flex flex-wrap gap-2"><Check ok={claim.matchesInvite.email} label="Email" /><Check ok={claim.matchesInvite.phone} label="Phone" /></div>
+        {mismatch ? (
+          <Alert tone="emergency" title="This account doesn't match who you invited">The link may have been forwarded. Only approve if you're certain this is the right person. Approving lets them receive your alerts and location.</Alert>
+        ) : matched ? (
+          <Alert tone="success">The verified account details match the invitation.</Alert>
+        ) : (
+          <Alert tone="warning">We couldn&apos;t compare details. Make sure you recognise this account before approving.</Alert>
+        )}
+        <div className="grid gap-2 sm:grid-cols-2">
+          <Button variant="outline" loading={busy === "reject_claim"} onClick={() => decide("reject_claim")}>Reject</Button>
+          <Button variant={mismatch ? "emergency" : "accent"} loading={busy === "approve_claim"} onClick={() => (!mismatch || confirm(`Approve ${claim.displayName} even though their details don't match ${c.name}?`)) && decide("approve_claim")}>
+            {mismatch ? "Approve anyway" : "Approve"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 function ContactRow({ c, onChanged, onInvite }: { c: TrustedContact; onChanged: () => void; onInvite: (link: string, name: string) => void }) {
   const [menu, setMenu] = useState(false);
@@ -45,6 +98,9 @@ function ContactRow({ c, onChanged, onInvite }: { c: TrustedContact; onChanged: 
           {!c.notifyOnEmergency && <Badge><BellOff />Alerts off</Badge>}
         </p>
         <p className="truncate text-xs text-muted-foreground">{c.relationship} · {c.email ?? c.phone}</p>
+        {c.status === "accepted" && c.claim && (
+          <p className="truncate text-xs text-muted-foreground">Linked account: <span className="font-medium text-foreground">{c.claim.displayName}</span>{c.claim.email ? ` · ${c.claim.email}` : ""}</p>
+        )}
       </div>
       <Badge tone={STATUS_TONE[c.status]} className="hidden sm:inline-flex">{STATUS_TEXT[c.status]}</Badge>
       <div className="relative">
@@ -56,7 +112,7 @@ function ContactRow({ c, onChanged, onInvite }: { c: TrustedContact; onChanged: 
               <p className="px-3 py-1.5 text-xs text-muted-foreground sm:hidden">{STATUS_TEXT[c.status]}</p>
               <MenuItem icon={Users} onClick={() => update({ priority: c.priority === "primary" ? "secondary" : "primary" }, "Priority updated")}>Make {c.priority === "primary" ? "secondary" : "primary"}</MenuItem>
               <MenuItem icon={c.notifyOnEmergency ? BellOff : Bell} onClick={() => update({ notifyOnEmergency: !c.notifyOnEmergency }, "Alert preference updated")}>{c.notifyOnEmergency ? "Turn off alerts" : "Turn on alerts"}</MenuItem>
-              {(c.status === "pending" || c.status === "rejected") && <MenuItem icon={RotateCw} onClick={() => update({ action: "resend_invite" }, "New invitation link created")}>Resend invitation</MenuItem>}
+              {(c.status === "pending" || c.status === "rejected" || c.status === "claim_rejected") && <MenuItem icon={RotateCw} onClick={() => update({ action: "resend_invite" }, "New invitation link created")}>Resend invitation</MenuItem>}
               {c.status === "blocked"
                 ? <MenuItem icon={Ban} onClick={() => update({ action: "unblock" }, "Contact unblocked")}>Unblock</MenuItem>
                 : <MenuItem icon={Ban} onClick={() => update({ action: "block" }, "Contact blocked. Location sharing stopped.")}>Block</MenuItem>}
@@ -88,8 +144,10 @@ export default function CirclePage() {
   const incoming = useApi<{ incoming: Incoming[] }>("/api/contacts/incoming");
 
   const list = contacts.data?.contacts ?? [];
-  const primary = list.filter((c) => c.priority === "primary");
-  const secondary = list.filter((c) => c.priority === "secondary");
+  const awaiting = list.filter((c) => c.status === "awaiting_approval" && c.claim);
+  const rest = list.filter((c) => !(c.status === "awaiting_approval" && c.claim));
+  const primary = rest.filter((c) => c.priority === "primary");
+  const secondary = rest.filter((c) => c.priority === "secondary");
   const byId = new Map(list.map((c) => [c.id, c]));
 
   return (
@@ -112,6 +170,13 @@ export default function CirclePage() {
           <EmptyState icon={Users} title="No trusted contacts yet" description="Add family or friends who should be alerted in an emergency. They'll receive an invitation to accept." action={<Button onClick={() => setAddOpen(true)}><UserPlus /> Add your first contact</Button>} />
         ) : (
           <div className="space-y-5">
+            {awaiting.length > 0 && (
+              <section className="space-y-3" aria-label="Requests waiting for your approval">
+                <h2 className="font-semibold">Waiting for your approval</h2>
+                <p className="text-sm text-muted-foreground">Nobody gets access to your alerts or location until you approve the account that used your invitation.</p>
+                {awaiting.map((c) => <ClaimApprovalCard key={c.id} c={c} onChanged={contacts.reload} />)}
+              </section>
+            )}
             {[{ title: "Primary contacts", hint: "Alerted immediately and simultaneously", items: primary }, { title: "Secondary contacts", hint: "Alerted if no primary contact acknowledges in time", items: secondary }].map((g) => (
               <Card key={g.title}>
                 <CardContent className="pt-5">
@@ -168,11 +233,19 @@ export default function CirclePage() {
               {incoming.data!.incoming.map((i) => (
                 <li key={i.linkId} className="flex items-center gap-3 py-3.5">
                   <span className="grid size-11 place-items-center rounded-full bg-primary text-sm font-bold text-white">{initials(i.ownerName)}</span>
-                  <div className="flex-1"><p className="font-semibold">{i.ownerName}</p><p className="text-xs capitalize text-muted-foreground">You&apos;re their {i.relationship.toLowerCase()} · {i.priority} contact since {formatDateTime(i.since)}</p></div>
+                  <div className="flex-1">
+                    <p className="flex flex-wrap items-center gap-2 font-semibold">{i.ownerName}{i.status === "awaiting_approval" && <Badge tone="primary">Waiting for their approval</Badge>}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {i.status === "awaiting_approval"
+                        ? `You accepted their invitation. You'll receive alerts once ${i.ownerName.split(" ")[0]} confirms it's you.`
+                        : `You're their ${i.relationship.toLowerCase()} · ${i.priority} contact since ${formatDateTime(i.since)}`}
+                    </p>
+                  </div>
                   <Button variant="ghost" size="sm" className="text-emergency" onClick={async () => {
-                    if (!confirm(`Leave ${i.ownerName}'s emergency circle? You'll stop receiving their alerts.`)) return;
-                    try { await api(`/api/contacts/incoming/${i.linkId}`, { method: "DELETE" }); toast("You left the circle"); incoming.reload(); } catch (e) { toast((e as Error).message, "error"); }
-                  }}>Leave</Button>
+                    const msg = i.status === "awaiting_approval" ? `Withdraw your request to join ${i.ownerName}'s circle?` : `Leave ${i.ownerName}'s emergency circle? You'll stop receiving their alerts and lose access to their past emergencies.`;
+                    if (!confirm(msg)) return;
+                    try { await api(`/api/contacts/incoming/${i.linkId}`, { method: "DELETE" }); toast(i.status === "awaiting_approval" ? "Request withdrawn" : "You left the circle"); incoming.reload(); } catch (e) { toast((e as Error).message, "error"); }
+                  }}>{i.status === "awaiting_approval" ? "Withdraw" : "Leave"}</Button>
                 </li>
               ))}
             </ul>

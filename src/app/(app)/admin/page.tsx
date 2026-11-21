@@ -64,7 +64,7 @@ function UsersTable() {
 }
 
 function EmergencyActivity() {
-  const { data, loading, error, reload } = useApi<{ events: AdminEvent[] }>("/api/admin/emergencies", { pollMs: 15000 });
+  const { data, loading, error, reload } = useApi<{ events: AdminEvent[] }>("/api/admin/emergencies", { pollMs: 30_000 });
   if (loading) return <LoadingBlock />;
   if (error) return <ErrorState message={error} onRetry={reload} />;
   return (

@@ -2,7 +2,7 @@
 
 import { linkWithPhoneNumber, RecaptchaVerifier, type ConfirmationResult } from "firebase/auth";
 import { CheckCircle2 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { DEMO_OTP_CODE } from "@/core/defaults";
 import type { UserProfile } from "@/core/types";
 import { Button } from "@/components/ui/button";
@@ -27,7 +27,28 @@ export function PhoneVerify({ initialPhone, onVerified }: { initialPhone?: strin
   const [error, setError] = useState<string | null>(null);
   const confirmation = useRef<ConfirmationResult | null>(null);
   const recaptchaRef = useRef<HTMLDivElement>(null);
+  const verifierRef = useRef<{ verifier: RecaptchaVerifier; el: HTMLElement } | null>(null);
   const normalized = phone.replace(/[\s()-]/g, "");
+
+  /**
+   * reCAPTCHA can only render once per element, so a retry after a failed attempt
+   * used to throw "reCAPTCHA has already been rendered". Each attempt now gets a
+   * FRESH host element, and the previous verifier is cleared on error/unmount.
+   */
+  const resetVerifier = () => {
+    try { verifierRef.current?.verifier.clear(); } catch { /* already cleared */ }
+    verifierRef.current?.el.remove();
+    verifierRef.current = null;
+  };
+  const getVerifier = () => {
+    if (verifierRef.current) return verifierRef.current.verifier;
+    const el = document.createElement("div");
+    recaptchaRef.current!.appendChild(el);
+    const verifier = new RecaptchaVerifier(getFirebaseAuth()!, el, { size: "invisible" });
+    verifierRef.current = { verifier, el };
+    return verifier;
+  };
+  useEffect(() => resetVerifier, []);
 
   const sendCode = async () => {
     setError(null);
@@ -36,11 +57,13 @@ export function PhoneVerify({ initialPhone, onVerified }: { initialPhone?: strin
     try {
       if (mode === "firebase") {
         const auth = getFirebaseAuth()!;
-        const verifier = new RecaptchaVerifier(auth, recaptchaRef.current!, { size: "invisible" });
-        confirmation.current = await linkWithPhoneNumber(auth.currentUser!, normalized, verifier);
+        confirmation.current = await linkWithPhoneNumber(auth.currentUser!, normalized, getVerifier());
       }
       setStage("code");
-    } catch (e) { setError(friendlyAuthError(e)); } finally { setBusy(false); }
+    } catch (e) {
+      resetVerifier(); // allow a clean retry
+      setError(friendlyAuthError(e));
+    } finally { setBusy(false); }
   };
 
   const confirm = async () => {
@@ -72,7 +95,7 @@ export function PhoneVerify({ initialPhone, onVerified }: { initialPhone?: strin
             <Input id="otp" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} />
           </Field>
           <div className="grid grid-cols-2 gap-2">
-            <Button variant="ghost" onClick={() => setStage("enter")}>Change number</Button>
+            <Button variant="ghost" onClick={() => { resetVerifier(); setCode(""); setStage("enter"); }}>Change number</Button>
             <Button onClick={confirm} loading={busy} disabled={code.length < 6}>Verify</Button>
           </div>
         </>
