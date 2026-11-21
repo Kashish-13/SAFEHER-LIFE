@@ -1,8 +1,8 @@
 "use client";
 
 import { ArrowLeft, ArrowRight, Bell, Check, MapPin, Mic, UserPlus } from "lucide-react";
-import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 import type { UserProfile } from "@/core/types";
 import { PhoneVerify } from "@/components/auth/phone-verify";
 import { Logo } from "@/components/brand/logo";
@@ -14,7 +14,7 @@ import { Field, Input, Select } from "@/components/ui/form";
 import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/hooks/use-auth";
 import { api } from "@/lib/api-client";
-import { cn } from "@/lib/utils";
+import { cn, safeRedirect } from "@/lib/utils";
 
 const STEPS = ["Profile", "Phone", "Permissions", "SOS preferences", "Trusted contact"];
 const LANGUAGES = [["en", "English"], ["hi", "हिन्दी"], ["bn", "বাংলা"], ["ta", "தமிழ்"], ["te", "తెలుగు"], ["mr", "मराठी"], ["kn", "ಕನ್ನಡ"], ["ml", "മലയാളം"], ["gu", "ગુજરાતી"], ["pa", "ਪੰਜਾਬੀ"]];
@@ -33,8 +33,14 @@ function PermissionRow({ icon: Icon, title, why, state, onRequest }: { icon: typ
 }
 
 export default function OnboardingPage() {
+  return <Suspense><OnboardingInner /></Suspense>;
+}
+
+function OnboardingInner() {
   const { status, profile, setProfile } = useAuth();
   const router = useRouter();
+  const destination = safeRedirect(useSearchParams().get("next"));
+  const goingToInvite = destination.startsWith("/invite/");
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -74,7 +80,7 @@ export default function OnboardingPage() {
       if (step === STEPS.length - 1) {
         const { profile: p } = await api<{ profile: UserProfile }>("/api/me", { method: "PATCH", body: { onboardingComplete: true } });
         setProfile(p);
-        router.replace("/dashboard");
+        router.replace(destination);
         return;
       }
       setStep((s) => s + 1);
@@ -99,6 +105,7 @@ export default function OnboardingPage() {
             {step === 0 && (
               <>
                 <div><h1 className="text-2xl font-bold">Welcome to SafeHer</h1><p className="text-muted-foreground">Let&apos;s set up your safety profile.</p></div>
+                {goingToInvite && <Alert tone="neutral">When you finish, we&apos;ll take you back to your invitation.</Alert>}
                 <Field id="fullName" label="Full name"><Input id="fullName" value={fullName} onChange={(e) => setFullName(e.target.value)} maxLength={80} autoComplete="name" /></Field>
                 <Field id="language" label="Preferred language" hint="Full translations are on the roadmap; your preference is saved now.">
                   <Select id="language" value={language} onChange={(e) => setLanguage(e.target.value)}>{LANGUAGES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</Select>

@@ -62,7 +62,7 @@ export default function SosSettingsPage() {
       <Card>
         <CardHeader><CardTitle>Smart escalation</CardTitle></CardHeader>
         <CardContent className="divide-y pt-0">
-          <SettingRow id="esc" title="Escalate to secondary contacts" description="If no primary contact acknowledges in time, alert secondary contacts automatically (once)." control={<Switch id="esc" checked={p.escalation.enabled} onCheckedChange={(v) => setP({ ...p, escalation: { ...p.escalation, enabled: v } })} />} />
+          <SettingRow id="esc" title="Escalate to secondary contacts" description="If no primary contact acknowledges in time, alert secondary contacts (once). Current limitation: the check runs while your emergency screen is open, with a once-a-day server backstop." control={<Switch id="esc" checked={p.escalation.enabled} onCheckedChange={(v) => setP({ ...p, escalation: { ...p.escalation, enabled: v } })} />} />
           <SettingRow id="esct" title="Wait before escalating" control={
             <Select id="esct" className="w-40" disabled={!p.escalation.enabled} value={p.escalation.primaryTimeoutSeconds} onChange={(e) => setP({ ...p, escalation: { ...p.escalation, primaryTimeoutSeconds: Number(e.target.value) } })}>
               {[30, 60, 120, 180, 300, 600].map((s) => <option key={s} value={s}>{s < 60 ? `${s} seconds` : `${s / 60} minute${s > 60 ? "s" : ""}`}</option>)}

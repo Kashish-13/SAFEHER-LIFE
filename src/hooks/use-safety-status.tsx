@@ -17,42 +17,39 @@ interface SafetyStatus {
   activeEmergency: EmergencyEvent | null;
   incomingAlerts: IncomingAlert[];
   unreadNotifications: number;
+  pendingApprovals: number;
   refresh: () => Promise<void>;
 }
 
-const Ctx = createContext<SafetyStatus>({ activeEmergency: null, incomingAlerts: [], unreadNotifications: 0, refresh: async () => {} });
+const Ctx = createContext<SafetyStatus>({ activeEmergency: null, incomingAlerts: [], unreadNotifications: 0, pendingApprovals: 0, refresh: async () => {} });
+
+/** Poll interval while the tab is visible. Paused when hidden; refreshed on return. */
+const POLL_MS = 20_000;
 
 /**
- * App-wide safety status, polled while the app is visible. This is how a
- * trusted contact with the web app open sees an incoming alert even without
- * push notifications configured.
+ * App-wide safety status from ONE lightweight endpoint (/api/status).
+ * This is how a trusted contact with SafeHer open sees an incoming alert before
+ * web push exists (Phase 1). It is not a substitute for push or server-side escalation.
  */
 export function SafetyStatusProvider({ children, enabled }: { children: ReactNode; enabled: boolean }) {
-  const [activeEmergency, setActive] = useState<EmergencyEvent | null>(null);
-  const [incomingAlerts, setIncoming] = useState<IncomingAlert[]>([]);
-  const [unreadNotifications, setUnread] = useState(0);
+  const [state, setState] = useState<Omit<SafetyStatus, "refresh">>({ activeEmergency: null, incomingAlerts: [], unreadNotifications: 0, pendingApprovals: 0 });
 
   const refresh = useCallback(async () => {
-    const [h, a, n] = await Promise.allSettled([
-      api<{ events: EmergencyEvent[] }>("/api/emergencies"),
-      api<{ alerts: IncomingAlert[] }>("/api/alerts"),
-      api<{ unread: number }>("/api/notifications"),
-    ]);
-    if (h.status === "fulfilled") setActive(h.value.events.find((e) => e.status === "active") ?? null);
-    if (a.status === "fulfilled") setIncoming(a.value.alerts.filter((x) => x.status === "active"));
-    if (n.status === "fulfilled") setUnread(n.value.unread);
+    try {
+      setState(await api<Omit<SafetyStatus, "refresh">>("/api/status"));
+    } catch { /* keep last known state; pages show their own errors */ }
   }, []);
 
   useEffect(() => {
     if (!enabled) return;
     refresh();
-    const t = setInterval(() => document.visibilityState === "visible" && refresh(), 8000);
+    const t = setInterval(() => document.visibilityState === "visible" && refresh(), POLL_MS);
     const onVis = () => document.visibilityState === "visible" && refresh();
     document.addEventListener("visibilitychange", onVis);
     return () => { clearInterval(t); document.removeEventListener("visibilitychange", onVis); };
   }, [enabled, refresh]);
 
-  return <Ctx.Provider value={{ activeEmergency, incomingAlerts, unreadNotifications, refresh }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ ...state, refresh }}>{children}</Ctx.Provider>;
 }
 
 export const useSafetyStatus = () => useContext(Ctx);

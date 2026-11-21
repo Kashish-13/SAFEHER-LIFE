@@ -11,7 +11,7 @@ const FLOW = [
   { t: "1s", title: "An emergency event is created", body: "SafeHer records the time, your trigger type and, if you've allowed it, your latest location from your device." },
   { t: "1s", title: "Primary contacts are alerted simultaneously", body: "Every accepted primary contact receives an in-app alert (and a push notification where configured) at the same moment. No one-by-one calling." },
   { t: "live", title: "You see real delivery status", body: "Each contact moves through Sent → Delivered → Acknowledged, and each step appears only once the relevant system confirms it." },
-  { t: "2 min", title: "Escalation if nobody acknowledges", body: "If no primary contact acknowledges within your configured window, secondary contacts are alerted automatically, exactly once." },
+  { t: "2 min", title: "Escalation if nobody acknowledges", body: "If no primary contact acknowledges within your configured window, secondary contacts are alerted, exactly once. Current limitation: this check runs while your emergency screen is open (with a once-a-day server backstop). A server-side scheduler that works with every screen closed is in development. Until then, keep the emergency screen open if you can, and call 112 in immediate danger." },
   { t: "end", title: "You mark yourself safe", body: "Resolve or cancel the emergency. Everyone alerted is told immediately, and the event is saved to your private history." },
 ];
 

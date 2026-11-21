@@ -14,6 +14,9 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // Default ".next". Override only for local verification builds so they don't
+  // clobber a running `npm run dev` (e.g. NEXT_DIST_DIR=.next-verify).
+  distDir: process.env.NEXT_DIST_DIR || ".next",
   reactStrictMode: true,
   poweredByHeader: false,
   serverExternalPackages: ["firebase-admin"],

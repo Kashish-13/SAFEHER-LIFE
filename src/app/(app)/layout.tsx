@@ -18,7 +18,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (status === "signed_out") router.replace(`/login?next=${encodeURIComponent(pathname)}`);
-    else if (status === "signed_in" && profile && !profile.onboardingComplete && !pathname.startsWith("/invite")) router.replace("/onboarding");
+    // Onboarding first, then back to where the user was headed (e.g. an invitation link).
+    else if (status === "signed_in" && profile && !profile.onboardingComplete) router.replace(`/onboarding?next=${encodeURIComponent(pathname)}`);
   }, [status, profile, router, pathname]);
 
   if (status !== "signed_in" || !profile) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, FlaskConical, LogOut, Phone, Siren } from "lucide-react";
+import { Bell, FlaskConical, LogOut, Phone, Siren, UserCheck } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
@@ -11,7 +11,7 @@ import { cn, initials } from "@/lib/utils";
 import { BOTTOM_NAV, NAV_GROUPS } from "./nav-config";
 
 function EmergencyBanners() {
-  const { activeEmergency, incomingAlerts } = useSafetyStatus();
+  const { activeEmergency, incomingAlerts, pendingApprovals } = useSafetyStatus();
   const pathname = usePathname();
   const pending = incomingAlerts.filter((a) => a.myResponse !== "acknowledged" && a.myResponse !== "declined");
   return (
@@ -26,6 +26,11 @@ function EmergencyBanners() {
           <Siren className="size-4 animate-pulse" /> {a.isSimulated && "[SIMULATED] "}{a.fromName} needs help. Tap to respond.
         </Link>
       ))}
+      {pendingApprovals > 0 && pathname !== "/circle" && (
+        <Link href="/circle" className="flex items-center justify-center gap-2 bg-primary px-4 py-2 text-sm font-semibold text-white">
+          <UserCheck className="size-4" /> {pendingApprovals} {pendingApprovals === 1 ? "person is" : "people are"} waiting for your approval to join your circle
+        </Link>
+      )}
     </>
   );
 }
