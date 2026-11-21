@@ -6,8 +6,6 @@ SafeHer is a personal safety and emergency response platform. One emergency trig
 primary trusted contact is alerted simultaneously, delivery and acknowledgement are tracked honestly, and if no one
 acknowledges in time the alert escalates to secondary contacts automatically, exactly once.
 
-> **SafeHer is not an emergency service.** It is not integrated with police dispatch, and alert delivery depends on networks
-> and devices, so it cannot be guaranteed. In immediate danger, call **112**.
 
 ---
 
