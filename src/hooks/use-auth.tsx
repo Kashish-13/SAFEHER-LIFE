@@ -35,7 +35,10 @@ interface AuthContextValue {
   resetPassword: (email: string) => Promise<void>;
   /** Confirms identity again (fresh sign-in time) before sensitive actions. */
   reauthenticate: (password?: string) => Promise<void>;
-  signOut: () => Promise<void>;
+  /** `redirectTo` overrides the default "go to login" after signing out (e.g. "/" after account deletion). */
+  signOut: (opts?: { redirectTo?: string }) => Promise<void>;
+  /** Where the app should go after a deliberate sign-out, if not the login page. */
+  exitTo: string | null;
   signOutEverywhere: () => Promise<void>;
 }
 
@@ -79,6 +82,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [email, setEmail] = useState<string | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [reauthMethod, setReauthMethod] = useState<ReauthMethod>(null);
+  const [exitTo, setExitTo] = useState<string | null>(null);
   const fbUser = useRef<User | null>(null);
   const pendingName = useRef<string | null>(null);
   const lastUid = useRef<string | null>(null);
@@ -160,13 +164,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setProfile(p); setUid(p.id); setEmail(p.email); setReauthMethod("demo"); setStatus("signed_in");
   }, []);
 
-  const signOut = useCallback(async () => {
+  const signOut = useCallback(async (opts?: { redirectTo?: string }) => {
+    setExitTo(opts?.redirectTo ?? null); // set BEFORE status flips, so route guards see it
     if (clientMode.mode === "firebase") await fbSignOut(getFirebaseAuth()!);
     clearSession();
   }, [clearSession]);
 
   const value = useMemo<AuthContextValue>(() => ({
-    mode, configProblems, status, uid, email, profile, reauthMethod,
+    mode, configProblems, status, uid, email, profile, reauthMethod, exitTo,
     refreshProfile: loadProfile,
     setProfile,
     signInDemo,
@@ -204,9 +209,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signOut,
     async signOutEverywhere() {
       await api("/api/me/sessions", { method: "DELETE" });
-      await signOut();
+      await signOut({ redirectTo: "/login" });
     },
-  }), [mode, configProblems, status, uid, email, profile, reauthMethod, loadProfile, signInDemo, signOut]);
+  }), [mode, configProblems, status, uid, email, profile, reauthMethod, exitTo, loadProfile, signInDemo, signOut]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

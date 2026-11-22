@@ -45,11 +45,11 @@ export default function AccountSettingsPage() {
         <CardContent className="space-y-3">
           <p className="text-sm text-muted-foreground">Lost a phone, or signed in on a shared computer? Signing out everywhere ends every session on every device, including this one.</p>
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={async () => { await signOut(); router.push("/login"); }}><LogOut />Sign out of this device</Button>
+            <Button variant="outline" onClick={() => signOut({ redirectTo: "/login" })}><LogOut />Sign out of this device</Button>
             <Button variant="outline" loading={busy === "everywhere"} onClick={async () => {
               if (!confirm("Sign out of SafeHer on ALL devices? You'll need to sign in again everywhere.")) return;
               setBusy("everywhere");
-              try { await signOutEverywhere(); toast("Signed out on all devices"); router.push("/login"); }
+              try { await signOutEverywhere(); toast("Signed out on all devices"); }
               catch (e) { toast((e as Error).message, "error"); setBusy(null); }
             }}><MonitorSmartphone />Sign out everywhere</Button>
           </div>
@@ -92,8 +92,7 @@ export default function AccountSettingsPage() {
             try {
               await api("/api/me", { method: "DELETE", body: { confirm: confirmText } });
               toast("Your account and data were deleted");
-              await signOut();
-              router.push("/");
+              await signOut({ redirectTo: "/" });
             } catch (err) {
               if (err instanceof ApiClientError && err.code === "reauth_required") setStep("reauth");
               setError((err as Error).message);

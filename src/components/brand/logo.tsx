@@ -1,17 +1,24 @@
+"use client";
+
 import Link from "next/link";
+import { useId } from "react";
 import { cn } from "@/lib/utils";
 
 /** SafeHer mark: a shield formed by two embracing arcs around a beacon dot. */
 export function LogoMark({ className }: { className?: string }) {
+  // Unique per instance: with a shared id, `url(#id)` resolves to the FIRST copy in the
+  // document. On mobile that copy is inside the hidden desktop sidebar, so the
+  // gradient failed to render and the shield was invisible.
+  const gradientId = `sh-g-${useId().replace(/:/g, "")}`;
   return (
     <svg viewBox="0 0 32 32" className={cn("size-8", className)} aria-hidden>
       <defs>
-        <linearGradient id="sh-g" x1="0" y1="0" x2="1" y2="1">
+        <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="1">
           <stop offset="0" stopColor="#2DD4BF" />
           <stop offset="1" stopColor="#7C6CF0" />
         </linearGradient>
       </defs>
-      <path d="M16 2.5 4.5 7v8.2c0 7 4.9 12.4 11.5 14.3 6.6-1.9 11.5-7.3 11.5-14.3V7L16 2.5Z" fill="url(#sh-g)" />
+      <path d="M16 2.5 4.5 7v8.2c0 7 4.9 12.4 11.5 14.3 6.6-1.9 11.5-7.3 11.5-14.3V7L16 2.5Z" fill={`url(#${gradientId})`} />
       <path d="M10.5 15.5c0-3.4 2.4-6 5.5-6s5.5 2.6 5.5 6" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" />
       <circle cx="16" cy="19.5" r="2.6" fill="#fff" />
     </svg>

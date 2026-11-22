@@ -9,6 +9,39 @@ npm run typecheck
 Tests run in **forced demo mode** (`SAFEHER_FORCE_DEMO=true`, see `vitest.config.ts`) against a fresh, seeded `MemoryStore`
 per test. **No test ever contacts a real person or external service.**
 
+## Browser tests (Playwright)
+
+They run against a separate demo-mode production build so they don't disturb your `npm run dev` (which uses `.next`):
+
+```powershell
+# one-time: npx playwright install chromium   (or: node node_modules/@playwright/test/cli.js install chromium)
+$env:NEXT_PUBLIC_DEMO_MODE='true'; $env:NEXT_DIST_DIR='.next-e2e'; npm run build
+$env:DEMO_SESSION_SECRET='<any 32+ random chars>'; $env:NEXT_PUBLIC_DEMO_MODE='true'; $env:NEXT_DIST_DIR='.next-e2e'; npm start -- -p 3100
+# in another terminal (restart the server first for fresh demo data; flows mutate it):
+$env:E2E_BASE_URL='http://localhost:3100'; npm run test:e2e
+```
+
+* `tests/e2e/01-pages.spec.ts`: every page at 375 / 768 / 1280 px: loads, has a heading, **no horizontal scroll**, **no JS
+  or console errors**; full-page screenshots to `gate-a/screenshots/<width>/`.
+* `tests/e2e/02-flows.spec.ts`: forwarded-invitation rejection, claim → owner approval, SOS → acknowledge → block revokes
+  access, sign-out-everywhere, account deletion with re-authentication. Screenshots to `gate-a/screenshots/flows/`.
+* Note: in full-page screenshots the fixed bottom nav appears mid-page (a capture artifact); in a real viewport it stays
+  at the bottom.
+* A building tool may append `.next-e2e/types/**` to `tsconfig.json` `include`; remove it before committing.
+
+## Phase 0 security coverage
+
+| Requirement | Tests |
+|---|---|
+| Demo and Firebase can't be mixed; partial config fails closed | `tests/core/mode.test.ts` |
+| Forwarded link grants nothing without owner approval; owner sees real claimant identity; mismatch flagged | `tests/server/phase0-security.test.ts`, `tests/e2e/02-flows.spec.ts` |
+| Claimant must be verified; in-app invites only to verified emails | `tests/server/phase0-security.test.ts` |
+| Block / remove / leave revoke access immediately (active + past events) | `tests/server/phase0-security.test.ts`, `tests/e2e/02-flows.spec.ts` |
+| Resolved **and** cancelled → contacts lose access after 24 h; sweep strips viewers | `tests/server/phase0-security.test.ts` |
+| Deletion needs sign-in < 5 min; sign-out-everywhere invalidates old tokens | `tests/server/phase0-security.test.ts`, `tests/e2e/02-flows.spec.ts` |
+| Sign-in rate limit kept and isolated from authenticated traffic | `tests/server/auth-and-roles.test.ts` |
+| Open-redirect protection for `?next=` | `tests/core/mode.test.ts` |
+
 ## Coverage map
 
 | Requirement | Tests |

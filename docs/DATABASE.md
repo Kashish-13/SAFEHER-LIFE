@@ -38,14 +38,15 @@ Access: read own. Retention: until account deletion (`DELETE /api/me` removes al
 | ownerId → users | the person being protected |
 | name, relationship, email, phone | email or phone required; email lower-cased |
 | priority | `primary` (alerted first) / `secondary` (escalation) |
-| status | `pending → accepted / rejected`; `blocked`; `removed` (soft delete) |
-| contactUserId → users | set on acceptance |
+| status | `pending → awaiting_approval → accepted` (owner approves) or `→ claim_rejected` (owner rejects); `pending → rejected` (invitee declines); `blocked`; `removed` (soft delete). Only `accepted` grants access |
+| claim | `{userId, displayName, email, emailVerified, phone, phoneVerified, matchesInvite{email,phone}, claimedAt}`: the account that actually used the link, shown to the owner for approval and kept as the linked identity |
+| contactUserId → users | set **only when the owner approves** the claim |
 | inviteTokenHash | SHA-256 of the one-time token. Never returned to clients; cleared on use/block/remove |
 | inviteExpiresAt | now + 7 days |
 | notifyOnEmergency | bool |
 
-Access: read if `ownerId == uid` or `contactUserId == uid`. Limits: 25 per owner, unique email/phone per owner.
-Indexes: single-field (`ownerId`, `contactUserId`, `inviteTokenHash`). Retention: until removed or the account is deleted.
+Access: client read if `ownerId == uid` only (contacts use the API). Limits: 25 per owner, unique email/phone per owner.
+Indexes: single-field (`contactUserId`, `inviteTokenHash`, `claim.userId`), composite `(ownerId,status)`, `(ownerId,contactUserId)`, `(ownerId,claim.userId)`. Retention: until removed or the account is deleted.
 
 ### `emergencyCircles/{id}`
 `ownerId`, `name ≤40`, `description ≤200`, `contactIds[] (≤50, must be owner's contacts)`. Access: owner read. Limit: 10 per owner.
@@ -59,18 +60,20 @@ Indexes: single-field (`ownerId`, `contactUserId`, `inviteTokenHash`). Retention
 | location | `GeoPoint \| null`. Only if `shareLocationOnSOS` |
 | escalationLevel, escalationConfig | snapshot of the user's config at trigger time |
 | isSimulated | true in demo mode / simulated triggers. No push sent |
-| authorizedViewerIds | user ids of contacts actually alerted. **Drives read access** |
+| authorizedViewerIds | user ids of contacts actually alerted. Removed immediately on block/remove/leave, and by the sweep after the 24 h window |
+| viewerAccessExpiresAt | close time (resolved **or** cancelled) + 24 h; `null` while active |
 | note, createdAt, updatedAt, cancelledAt, resolvedAt | |
 
-Access: owner or `uid in authorizedViewerIds`. Admins see a redacted projection only (no location/note).
-Indexes: `(userId, status)`, `(userId, createdAt desc)`, `(userId, createdAt asc)`.
+Access (API, `core/permissions.emergencyAccess`): owner always; a contact only if in `authorizedViewerIds`, link still
+`accepted`, and event active or `now < viewerAccessExpiresAt`. Client SDK reads: **owner only** (rules). Admins see a redacted projection only.
+Indexes: `(userId, status)`, `(userId, createdAt desc)`, `(userId, createdAt asc)`, `(userId, authorizedViewerIds array-contains)`.
 Retention: closed events older than `privacy.historyRetentionDays` deleted by the cron sweep. Active events are never deleted.
 
 ### `emergencyResponses/{eventId__contactId}`
 Per-contact alert record. Deterministic id prevents duplicate alerts.
 `eventId, ownerId, contactId, contactUserId, contactName, tier, channels[], status, history[{status, at, detail}], failureReason`.
 Status transitions enforced by `src/core/notification-status.ts` (forward-only).
-Access: `ownerId == uid` or `contactUserId == uid`. Index: `(eventId, contactUserId)`. Retention: deleted with the event.
+Access: client read `ownerId == uid` only (contacts via API). Indexes: `(eventId, contactUserId)`, `(contactUserId, createdAt)`. Retention: deleted with the event.
 
 ### `locationSessions/{id}`
 `ownerId, contactId, contactUserId, contactName, mode (always|temporary), status (active|paused|stopped), expiresAt, lastLocation, lastUpdatedAt`.
