@@ -1,0 +1,58 @@
+﻿
+Running 5 tests using 1 worker
+
+
+node : (node:30244) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+At line:1 char:491
++ ... host:3100'; node node_modules/@playwright/test/cli.js test tests/e2e/ ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ((node:30244) Wa... env being set.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+(Use `node --trace-warnings ...` to show where the warning was created)
+[1/5] tests\e2e\02-flows.spec.ts:20:1 › owner sees the REAL identity behind a forwarded invitation and can reject it
+[2/5] tests\e2e\02-flows.spec.ts:37:1 › invitation claim → owner approval → linked identity shown
+[3/5] tests\e2e\02-flows.spec.ts:74:1 › SOS → contact acknowledges → blocking revokes the contact's access immediately
+[4/5] tests\e2e\02-flows.spec.ts:118:1 › sign out everywhere invalidates other sessions
+[5/5] tests\e2e\02-flows.spec.ts:137:1 › account deletion requires confirming identity first
+  1) tests\e2e\02-flows.spec.ts:137:1 › account deletion requires confirming identity first ────────
+
+    Error: expect(locator).toBeVisible() failed
+
+    Locator: getByRole('dialog').getByText('Identity confirmed')
+    Expected: visible
+    Timeout: 15000ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toBeVisible" getByRole('dialog').getByText('Identity confirmed') with timeout 15000ms
+      - waiting for getByRole('dialog').getByText('Identity confirmed')
+
+
+      144 |   await m.page.screenshot({ path: `${SHOTS}/09-delete-requires-reauth.png` });
+      145 |   await dialog.getByRole("button", { name: /Confirm it.s me/ }).click();
+    > 146 |   await expect(dialog.getByText("Identity confirmed")).toBeVisible();
+          |                                                        ^
+      147 |   await dialog.getByLabel("Confirmation").fill("DELETE");
+      148 |   await dialog.getByRole("button", { name: "Permanently delete" }).click();
+      149 |   await m.page.waitForURL((u) => u.pathname === "/");
+        at C:\Users\Kashish Arya\SAFEHER  Women's Safety & Emergency Response Platform\tests\e2e\02-flows.spec.ts:146:56
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results\02-flows-account-deletion-requires-confirming-identity-first\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results\02-flows-account-deletion-requires-confirming-identity-first\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results\02-flows-account-deletion-requires-confirming-identity-first\trace.zip
+    Usage:
+
+        npx playwright show-trace test-results\02-flows-account-deletion-requires-confirming-identity-first\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+  1 failed
+    tests\e2e\02-flows.spec.ts:137:1 › account deletion requires confirming identity first ─────────
+  4 passed (42.5s)

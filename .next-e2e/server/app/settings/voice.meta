@@ -1,0 +1,15 @@
+{
+  "headers": {
+    "x-nextjs-stale-time": "300",
+    "x-nextjs-prerender": "1",
+    "x-next-cache-tags": "_N_T_/layout,_N_T_/(app)/layout,_N_T_/(app)/settings/layout,_N_T_/(app)/settings/voice/layout,_N_T_/(app)/settings/voice/page,_N_T_/settings/voice"
+  },
+  "routeCache": {
+    "key": "/route-cache/APP_PAGE/d0d206818621680a99a6b8706939e06718817eb31669d952bc056238ea93ef93/$/settings/voice",
+    "owner": {
+      "kind": "APP_PAGE",
+      "sourceRoute": "/(app)/settings/voice/page"
+    },
+    "isFallback": false
+  }
+}

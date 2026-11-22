@@ -1,0 +1,15 @@
+{
+  "headers": {
+    "x-nextjs-stale-time": "300",
+    "x-nextjs-prerender": "1",
+    "x-next-cache-tags": "_N_T_/layout,_N_T_/(app)/layout,_N_T_/(app)/emergency-services/layout,_N_T_/(app)/emergency-services/page,_N_T_/emergency-services"
+  },
+  "routeCache": {
+    "key": "/route-cache/APP_PAGE/44af9ddda2a04abe1e866638b3e44e8f0dabc536e4c24a65c1844720f223c266/$/emergency-services",
+    "owner": {
+      "kind": "APP_PAGE",
+      "sourceRoute": "/(app)/emergency-services/page"
+    },
+    "isFallback": false
+  }
+}

@@ -1,0 +1,2 @@
+"use strict";(()=>{var a={};a.id=6183,a.ids=[6183],a.modules={45957:(a,b,c)=>{async function d(){let{resolveMode:a}=await c.e(3164).then(c.bind(c,53164)),{mode:b,problems:d}=a(process.env,"server");if("misconfigured"===b){let a=`[SafeHer] Server configuration error:
+  - ${d.join("\n  - ")}`;throw console.error(a),Error(a)}console.info(`[SafeHer] Running in ${b} mode`)}c.r(b),c.d(b,{register:()=>d})}};var b=require("./webpack-runtime.js");b.C(a);var c=b(b.s=45957);module.exports=c})();

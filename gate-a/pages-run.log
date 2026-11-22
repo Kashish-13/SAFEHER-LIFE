@@ -1,0 +1,100 @@
+﻿
+Running 87 tests using 1 worker
+
+
+node : (node:35032) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+At line:1 char:400
++ ... host:3100'; node node_modules/@playwright/test/cli.js test tests/e2e/ ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ((node:35032) Wa... env being set.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+(Use `node --trace-warnings ...` to show where the warning was created)
+[1/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 375px › landing
+[2/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 375px › features
+[3/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 375px › how-it-works
+[4/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 375px › privacy-safety
+[5/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 375px › about
+[6/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 375px › contact
+[7/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 375px › login
+[8/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 375px › signup
+[9/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 375px › forgot-password
+[10/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 375px › not-found
+[11/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 375px › onboarding
+[12/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 375px › dashboard
+[13/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 375px › sos
+[14/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 375px › circle
+[15/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 375px › location
+[16/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 375px › journey
+[17/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 375px › emergency-services
+[18/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 375px › fake-call
+[19/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 375px › history
+[20/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 375px › emergency-past-owner
+[21/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 375px › notifications
+[22/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 375px › profile
+[23/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 375px › settings-sos
+[24/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 375px › settings-voice
+[25/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 375px › settings-privacy
+[26/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 375px › settings-account
+[27/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 375px › circle-as-contact
+[28/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 375px › emergency-past-expired-contact
+[29/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 375px › admin
+[30/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 768px › landing
+[31/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 768px › features
+[32/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 768px › how-it-works
+[33/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 768px › privacy-safety
+[34/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 768px › about
+[35/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 768px › contact
+[36/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 768px › login
+[37/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 768px › signup
+[38/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 768px › forgot-password
+[39/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 768px › not-found
+[40/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 768px › onboarding
+[41/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 768px › dashboard
+[42/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 768px › sos
+[43/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 768px › circle
+[44/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 768px › location
+[45/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 768px › journey
+[46/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 768px › emergency-services
+[47/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 768px › fake-call
+[48/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 768px › history
+[49/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 768px › emergency-past-owner
+[50/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 768px › notifications
+[51/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 768px › profile
+[52/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 768px › settings-sos
+[53/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 768px › settings-voice
+[54/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 768px › settings-privacy
+[55/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 768px › settings-account
+[56/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 768px › circle-as-contact
+[57/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 768px › emergency-past-expired-contact
+[58/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 768px › admin
+[59/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 1280px › landing
+[60/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 1280px › features
+[61/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 1280px › how-it-works
+[62/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 1280px › privacy-safety
+[63/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 1280px › about
+[64/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 1280px › contact
+[65/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 1280px › login
+[66/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 1280px › signup
+[67/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 1280px › forgot-password
+[68/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 1280px › not-found
+[69/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 1280px › onboarding
+[70/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 1280px › dashboard
+[71/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 1280px › sos
+[72/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 1280px › circle
+[73/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 1280px › location
+[74/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 1280px › journey
+[75/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 1280px › emergency-services
+[76/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 1280px › fake-call
+[77/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 1280px › history
+[78/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 1280px › emergency-past-owner
+[79/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 1280px › notifications
+[80/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 1280px › profile
+[81/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 1280px › settings-sos
+[82/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 1280px › settings-voice
+[83/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 1280px › settings-privacy
+[84/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 1280px › settings-account
+[85/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 1280px › circle-as-contact
+[86/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 1280px › emergency-past-expired-contact
+[87/87] tests\e2e\01-pages.spec.ts:51:7 › viewport 1280px › admin
+  87 passed (2.7m)

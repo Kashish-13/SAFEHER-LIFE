@@ -1,0 +1,15 @@
+{
+  "headers": {
+    "x-nextjs-stale-time": "300",
+    "x-nextjs-prerender": "1",
+    "x-next-cache-tags": "_N_T_/layout,_N_T_/(app)/layout,_N_T_/(app)/journey/layout,_N_T_/(app)/journey/page,_N_T_/journey"
+  },
+  "routeCache": {
+    "key": "/route-cache/APP_PAGE/5e934faab26228b7193f6f336168f819f4a509ba04f58809a2e1ebf7b01c457f/$/journey",
+    "owner": {
+      "kind": "APP_PAGE",
+      "sourceRoute": "/(app)/journey/page"
+    },
+    "isFallback": false
+  }
+}
