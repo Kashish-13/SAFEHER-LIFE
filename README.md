@@ -6,6 +6,7 @@ SafeHer is a personal safety and emergency response platform. One emergency trig
 primary trusted contact is alerted simultaneously, delivery and acknowledgement are tracked honestly, and if no one
 acknowledges in time the alert escalates to secondary contacts automatically, exactly once.
 
+> **SAFEHER-LIFE is not an emergency service. Alert delivery and response cannot be guaranteed. In immediate danger, call India's emergency number 112.**
 
 ---
 
