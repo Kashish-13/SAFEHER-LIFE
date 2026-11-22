@@ -58,7 +58,9 @@ export function authed<P extends Params = Params>(
     try {
       assertServerConfigured();
       const rule = options.rateLimit ?? (req.method === "GET" ? RATE_LIMITS.default : RATE_LIMITS.write);
-      checkRateLimit(`ip:${clientIp(req)}`, { ...rule, limit: rule.limit * 3 }); // coarse per-IP guard
+      // Coarse per-IP guard for authenticated calls. Uses its OWN counter so authenticated
+      // traffic can't exhaust the public sign-in budget (publicRoute's `ip:` counter).
+      checkRateLimit(`authed-ip:${clientIp(req)}`, { ...rule, limit: rule.limit * 3 });
       const auth = await requireAuth(req, options.roles);
       checkRateLimit(`uid:${auth.uid}`, rule);
       const params = (await routeCtx?.params) ?? ({} as P);

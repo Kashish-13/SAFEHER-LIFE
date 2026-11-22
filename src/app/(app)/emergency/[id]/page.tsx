@@ -35,12 +35,14 @@ export default function EmergencyPage() {
   const { getCurrent } = useGeolocation();
   // Poll only while the emergency is live; closed events don't change.
   const [live, setLive] = useState(true);
-  const { data, error, loading, reload } = useApi<EventView>(`/api/emergencies/${id}`, { pollMs: live ? 4000 : undefined });
+  const { data, error, errorStatus, loading, reload } = useApi<EventView>(`/api/emergencies/${id}`, { pollMs: live ? 4000 : undefined });
   const [escalation, setEscalation] = useState<EscalationResult["decision"] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   const active = data?.event.status === "active";
   useEffect(() => { if (data) setLive(data.event.status === "active"); }, [data]);
+  // No access (403) won't change by polling: stop.
+  useEffect(() => { if (errorStatus === 403) setLive(false); }, [errorStatus]);
   const isOwner = data?.viewerIsOwner;
 
   // Owner's open screen drives the (idempotent) escalation check; the cron job is the backstop.
@@ -60,6 +62,19 @@ export default function EmergencyPage() {
   };
 
   if (loading && !data) return <LoadingBlock rows={4} />;
+  // 403 is a deliberate privacy decision (not alerted / revoked / 24 h expired), not a glitch to retry.
+  if (error && errorStatus === 403) {
+    return (
+      <div className="mx-auto max-w-md space-y-4">
+        <Alert tone="neutral" title="You can't view this emergency">{error}</Alert>
+        <p className="text-sm text-muted-foreground">If you think someone is in danger, call 112 or contact them directly.</p>
+        <div className="flex gap-2">
+          <Button asChild variant="emergency"><a href="tel:112"><Phone />Call 112</a></Button>
+          <Button asChild variant="outline"><Link href="/dashboard">Back to dashboard</Link></Button>
+        </div>
+      </div>
+    );
+  }
   if (error && !data) return <ErrorState message={error} onRetry={reload} />;
   if (!data) return null;
   const { event, responses, summary } = data;

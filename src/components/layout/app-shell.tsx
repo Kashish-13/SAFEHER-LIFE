@@ -64,7 +64,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </nav>
         <div className="border-t p-3">
           <Link href="/sos" className="mb-2 flex items-center justify-center gap-2 rounded-xl bg-emergency py-3 text-sm font-bold text-white shadow-sm hover:bg-emergency/90"><Siren className="size-4" /> SOS</Link>
-          <button onClick={async () => { await signOut(); router.push("/login"); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground hover:bg-secondary">
+          <button onClick={() => signOut({ redirectTo: "/login" })} className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground hover:bg-secondary">
             <LogOut className="size-4" /> Sign out
           </button>
         </div>
