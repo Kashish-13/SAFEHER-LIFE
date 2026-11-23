@@ -10,9 +10,13 @@ let app: App | null = null;
 /**
  * Lazily initialises the Firebase Admin SDK.
  *  - Firebase mode: service-account credentials from environment variables.
- *  - Emulator mode: project id ONLY, no credential. The SDK reads
- *    FIRESTORE_EMULATOR_HOST / FIREBASE_AUTH_EMULATOR_HOST (validated as loopback
- *    by resolveMode) and talks to the local emulators.
+ *  - Emulator mode: project id ONLY; we pass no credential. The SDK then fills in
+ *    its lazy "application default" placeholder (Admin Firestore refuses to start
+ *    without one), but never asks it for a token: with FIRESTORE_EMULATOR_HOST and
+ *    FIREBASE_AUTH_EMULATOR_HOST set (validated as loopback by resolveMode) both
+ *    services talk to the local emulators with the emulator's fixed "owner" token.
+ *    resolveMode also refuses emulator mode while any credential variable exists,
+ *    and the launcher disables Google metadata-server detection.
  */
 export function getAdminApp(): App {
   if (!isFirebaseBackend()) throw new Error("Firebase Admin SDK is not configured");
