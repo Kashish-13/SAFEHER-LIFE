@@ -1,5 +1,5 @@
 import "server-only";
-import { resolveMode, type ModeResult } from "@/lib/mode";
+import { resolveMode, usesFirebase, type ModeResult } from "@/lib/mode";
 
 /**
  * Server runtime configuration. Mode rules live in src/lib/mode.ts and are
@@ -10,6 +10,8 @@ export const serverEnv = {
   get firebaseClientEmail() { return process.env.FIREBASE_ADMIN_CLIENT_EMAIL ?? ""; },
   get firebasePrivateKey() { return (process.env.FIREBASE_ADMIN_PRIVATE_KEY ?? "").replace(/\\n/g, "\n"); },
   get storageBucket() { return process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ?? ""; },
+  /** Emulator mode only: the offline "demo-*" project id. */
+  get emulatorProjectId() { return process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? ""; },
   get appUrl() { return process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"; },
   get cronSecret() { return process.env.CRON_SECRET ?? ""; },
   get demoSecret() { return process.env.DEMO_SESSION_SECRET ?? ""; },
@@ -33,8 +35,22 @@ export function assertServerConfigured(): void {
   if (mode === "misconfigured") throw new ConfigError(problems);
 }
 
+/**
+ * Real Firebase project with Admin credentials. Gates anything that would leave
+ * this machine (e.g. FCM push), which is never allowed in emulator mode.
+ */
 export function isFirebaseAdminConfigured(): boolean {
   return getServerMode().mode === "firebase";
+}
+
+/** Local Firebase Emulator Suite (offline "demo-*" project, loopback hosts). */
+export function isEmulatorMode(): boolean {
+  return getServerMode().mode === "emulator";
+}
+
+/** Uses the Firebase SDKs and Firestore store: a real project OR the local emulator. */
+export function isFirebaseBackend(): boolean {
+  return usesFirebase(getServerMode().mode);
 }
 
 export function isDemoMode(): boolean {

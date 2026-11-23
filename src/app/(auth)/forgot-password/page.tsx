@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/feedback";
 import { Field, Input } from "@/components/ui/form";
 import { useAuth } from "@/hooks/use-auth";
+import { usesFirebase } from "@/lib/mode";
 
 export default function ForgotPasswordPage() {
   const { mode, resetPassword } = useAuth();
@@ -18,7 +19,7 @@ export default function ForgotPasswordPage() {
       <h1 className="text-3xl font-bold">Reset your password</h1>
       <p className="mt-1.5 text-muted-foreground">We&apos;ll email you a secure reset link.</p>
       <div className="mt-8">
-        {mode !== "firebase" ? (
+        {!usesFirebase(mode) ? (
           <Alert tone="warning" title="Not available in demo mode">Password reset requires Firebase Authentication. Demo personas don&apos;t have passwords.</Alert>
         ) : sent ? (
           // Same message whether or not the account exists, to avoid account enumeration.

@@ -11,6 +11,7 @@ import { Alert } from "@/components/ui/feedback";
 import { Field, Input } from "@/components/ui/form";
 import { friendlyAuthError, useAuth } from "@/hooks/use-auth";
 import { safeRedirect } from "@/lib/utils";
+import { usesFirebase } from "@/lib/mode";
 
 function LoginInner() {
   const { mode, status, profile, signInEmail } = useAuth();
@@ -37,7 +38,7 @@ function LoginInner() {
       <div className="mt-8">
         {mode === "demo" ? (
           <DemoPersonaPicker redirectTo={safeNext} />
-        ) : mode !== "firebase" ? (
+        ) : !usesFirebase(mode) ? (
           <ConfigProblem />
         ) : (
           <form
@@ -60,7 +61,7 @@ function LoginInner() {
           </form>
         )}
       </div>
-      {mode === "firebase" && <p className="mt-6 text-center text-sm text-muted-foreground">New to SafeHer? <Link href={signupHref} className="font-semibold text-accent">Create an account</Link></p>}
+      {usesFirebase(mode) && <p className="mt-6 text-center text-sm text-muted-foreground">New to SafeHer? <Link href={signupHref} className="font-semibold text-accent">Create an account</Link></p>}
     </>
   );
 }

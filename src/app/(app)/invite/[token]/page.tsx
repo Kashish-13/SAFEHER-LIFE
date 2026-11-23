@@ -12,6 +12,7 @@ import { useToast } from "@/components/ui/toast";
 import { useApi } from "@/hooks/use-api";
 import { useAuth } from "@/hooks/use-auth";
 import { api } from "@/lib/api-client";
+import { usesFirebase } from "@/lib/mode";
 
 interface Invitation { ownerName: string; relationship: string; priority: string; status: string }
 
@@ -74,7 +75,7 @@ export default function InvitePage() {
         {inv.status !== "pending" ? <Alert tone="warning">This invitation is no longer pending.</Alert> : !verified ? (
           <div className="space-y-3 text-left">
             <Alert tone="warning" title="Verify your identity first">
-              So {inv.ownerName.split(" ")[0]} can trust this request, verify your phone number{mode === "firebase" ? " or your email address (check your inbox for the verification link)" : ""}.
+              So {inv.ownerName.split(" ")[0]} can trust this request, verify your phone number{usesFirebase(mode) ? " or your email address (check your inbox for the verification link)" : ""}.
             </Alert>
             <PhoneVerify />
           </div>

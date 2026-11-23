@@ -11,6 +11,7 @@ import { Alert } from "@/components/ui/feedback";
 import { Field, Input } from "@/components/ui/form";
 import { friendlyAuthError, useAuth } from "@/hooks/use-auth";
 import { safeRedirect } from "@/lib/utils";
+import { usesFirebase } from "@/lib/mode";
 
 function SignupInner() {
   const { mode, status, profile, signUpEmail } = useAuth();
@@ -35,7 +36,7 @@ function SignupInner() {
       <div className="mt-8">
         {mode === "demo" ? (
           <DemoPersonaPicker redirectTo={safeNext} />
-        ) : mode !== "firebase" ? (
+        ) : !usesFirebase(mode) ? (
           <ConfigProblem />
         ) : (
           <form
@@ -64,7 +65,7 @@ function SignupInner() {
           </form>
         )}
       </div>
-      {mode === "firebase" && <p className="mt-6 text-center text-sm text-muted-foreground">Already have an account? <Link href={nextParam ? `/login?next=${encodeURIComponent(safeNext)}` : "/login"} className="font-semibold text-accent">Sign in</Link></p>}
+      {usesFirebase(mode) && <p className="mt-6 text-center text-sm text-muted-foreground">Already have an account? <Link href={nextParam ? `/login?next=${encodeURIComponent(safeNext)}` : "/login"} className="font-semibold text-accent">Sign in</Link></p>}
     </>
   );
 }
