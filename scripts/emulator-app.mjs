@@ -20,9 +20,9 @@ const PROJECT_ID = "demo-safeher-life";
 const PORT = "3200";
 const DIST_DIR = ".next-emu";
 
-// The app learns emulator mode in Phase 1 step E3. Until then it would treat these
-// settings as a partial (misconfigured) Firebase setup, so only `check` is allowed.
-const APP_SUPPORTS_EMULATOR = false;
+// Emulator mode exists in the app since Phase 1 step E3 (src/lib/mode.ts), which
+// re-checks every rule below on the server and in the browser.
+const APP_SUPPORTS_EMULATOR = true;
 
 const LOOPBACK = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 const REQUIRED = [
@@ -35,6 +35,8 @@ const REQUIRED = [
   "NEXT_PUBLIC_FIREBASE_APP_ID",
   "FIRESTORE_EMULATOR_HOST",
   "FIREBASE_AUTH_EMULATOR_HOST",
+  "NEXT_PUBLIC_FIRESTORE_EMULATOR_HOST",
+  "NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST",
   "GCLOUD_PROJECT",
   "NEXT_PUBLIC_APP_URL",
 ];
@@ -47,6 +49,7 @@ const FORBIDDEN = [
   "GOOGLE_APPLICATION_CREDENTIALS",
   "FIREBASE_CONFIG",
   "FIREBASE_TOKEN",
+  "FIREBASE_SERVICE_ACCOUNT",
   "NEXT_PUBLIC_DEMO_MODE",
   "SAFEHER_FORCE_DEMO",
   "DEMO_SESSION_SECRET",
@@ -82,8 +85,11 @@ function validate(env) {
   for (const k of ["NEXT_PUBLIC_FIREBASE_PROJECT_ID", "GCLOUD_PROJECT"]) {
     if (env[k] && env[k] !== PROJECT_ID) problems.push(`${k} must be "${PROJECT_ID}" (an offline-only demo- project)`);
   }
-  for (const k of ["FIRESTORE_EMULATOR_HOST", "FIREBASE_AUTH_EMULATOR_HOST"]) {
+  for (const k of ["FIRESTORE_EMULATOR_HOST", "FIREBASE_AUTH_EMULATOR_HOST", "NEXT_PUBLIC_FIRESTORE_EMULATOR_HOST", "NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST"]) {
     if (env[k] && !LOOPBACK.has(hostOf(env[k]))) problems.push(`${k} must point at a loopback address (127.0.0.1 / localhost)`);
+  }
+  for (const [s, c] of [["FIRESTORE_EMULATOR_HOST", "NEXT_PUBLIC_FIRESTORE_EMULATOR_HOST"], ["FIREBASE_AUTH_EMULATOR_HOST", "NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST"]]) {
+    if (env[s] && env[c] && env[s] !== env[c]) problems.push(`${c} must equal ${s}`);
   }
   if (env.NEXT_PUBLIC_APP_URL) {
     try {
@@ -138,7 +144,9 @@ if (!APP_SUPPORTS_EMULATOR) {
 // Blank out anything that could select demo mode or real credentials. Next.js
 // does not override variables that already exist in the environment.
 const blanks = Object.fromEntries(FORBIDDEN.map((k) => [k, ""]));
-const childEnv = { ...process.env, ...blanks, ...fileEnv, NEXT_DIST_DIR: DIST_DIR };
+// METADATA_SERVER_DETECTION=none: Google's auth library never probes the cloud metadata
+// server (169.254.169.254) for credentials. Nothing should ask it to; this makes sure.
+const childEnv = { ...process.env, ...blanks, ...fileEnv, NEXT_DIST_DIR: DIST_DIR, METADATA_SERVER_DETECTION: "none" };
 const nextBin = join(ROOT, "node_modules", "next", "dist", "bin", "next");
 const args = command === "build" ? ["build"] : [command, "-p", PORT];
 const child = spawn(process.execPath, [nextBin, ...args], { cwd: ROOT, env: childEnv, stdio: "inherit" });
