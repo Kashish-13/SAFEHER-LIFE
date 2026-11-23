@@ -29,6 +29,18 @@ $env:E2E_BASE_URL='http://localhost:3100'; npm run test:e2e
   at the bottom.
 * A building tool may append `.next-e2e/types/**` to `tsconfig.json` `include`; remove it before committing.
 
+## Firebase Emulator tests (Phase 1)
+
+Local only, project `demo-safeher-life`, no real Firebase project. Setup, ports and safety rules: [EMULATOR.md](EMULATOR.md).
+
+```powershell
+npm run test:rules      # Firestore security-rules tests (tests/rules), inside the Firestore emulator
+npm run test:emulator   # store/service/auth tests (tests/emulator), inside the Auth + Firestore emulators
+```
+
+Both start the emulators, run the tests, and shut the emulators down again. The test folders are filled in later Phase 1
+steps (E4–E7); until then the commands only check the emulators start and stop cleanly.
+
 ## Phase 0 security coverage
 
 | Requirement | Tests |
