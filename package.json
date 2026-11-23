@@ -10,7 +10,14 @@
     "typecheck": "node node_modules/typescript/bin/tsc --noEmit",
     "test": "node node_modules/vitest/vitest.mjs run",
     "test:watch": "node node_modules/vitest/vitest.mjs",
-    "test:e2e": "node node_modules/@playwright/test/cli.js test"
+    "test:e2e": "node node_modules/@playwright/test/cli.js test",
+    "emulators": "firebase emulators:start --project demo-safeher-life --only auth,firestore",
+    "emulators:check": "node scripts/emulator-app.mjs check",
+    "dev:emulator": "node scripts/emulator-app.mjs dev",
+    "build:emulator": "node scripts/emulator-app.mjs build",
+    "start:emulator": "node scripts/emulator-app.mjs start",
+    "test:rules": "firebase emulators:exec --project demo-safeher-life --only firestore \"node node_modules/vitest/vitest.mjs run --dir tests/rules --passWithNoTests\"",
+    "test:emulator": "firebase emulators:exec --project demo-safeher-life --only auth,firestore \"node node_modules/vitest/vitest.mjs run --dir tests/emulator --passWithNoTests\""
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.1.2",
