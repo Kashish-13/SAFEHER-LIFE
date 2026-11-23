@@ -10,7 +10,7 @@ import type { UserProfile } from "@/core/types";
 import { api, setTokenProvider } from "@/lib/api-client";
 import { clientMode } from "@/lib/config";
 import { getFirebaseAuth } from "@/lib/firebase/client";
-import type { AppMode } from "@/lib/mode";
+import { usesFirebase, type AppMode } from "@/lib/mode";
 
 const DEMO_TOKEN_KEY = "safeher.demoToken";
 
@@ -89,7 +89,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     setTokenProvider(async () => {
-      if (clientMode.mode === "firebase") return fbUser.current ? fbUser.current.getIdToken() : null;
+      if (usesFirebase(clientMode.mode)) return fbUser.current ? fbUser.current.getIdToken() : null;
       if (clientMode.mode === "demo") return readDemoToken();
       return null;
     });
@@ -130,7 +130,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (clientMode.mode === "firebase") {
+    if (usesFirebase(clientMode.mode)) {
       const auth = getFirebaseAuth()!;
       return onIdTokenChanged(auth, async (u) => {
         fbUser.current = u;
@@ -166,7 +166,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async (opts?: { redirectTo?: string }) => {
     setExitTo(opts?.redirectTo ?? null); // set BEFORE status flips, so route guards see it
-    if (clientMode.mode === "firebase") await fbSignOut(getFirebaseAuth()!);
+    if (usesFirebase(clientMode.mode)) await fbSignOut(getFirebaseAuth()!);
     clearSession();
   }, [clearSession]);
 

@@ -2,7 +2,7 @@ import "server-only";
 import type { Principal } from "@/core/permissions";
 import type { Role, UserProfile } from "@/core/types";
 import { verifyDemoToken } from "./demo-token";
-import { isDemoMode, isFirebaseAdminConfigured } from "./env";
+import { isDemoMode, isFirebaseBackend } from "./env";
 import { ApiError, forbidden, unauthorized } from "./errors";
 import { adminAuth } from "./firebase-admin";
 import { ensureSeeded, getStore } from "./store";
@@ -36,9 +36,10 @@ export async function authenticate(req: Request): Promise<AuthContext | null> {
   let uid: string, email: string | null = null, name: string | null = null, emailVerified = false, authTime = 0;
   let demoTokenVersion: number | null = null;
 
-  if (isFirebaseAdminConfigured()) {
+  if (isFirebaseBackend()) {
     try {
-      const decoded = await adminAuth().verifyIdToken(token, true); // checkRevoked: honours sign-out-everywhere
+      // checkRevoked: honours sign-out-everywhere. In emulator mode this checks the local Auth emulator.
+      const decoded = await adminAuth().verifyIdToken(token, true);
       uid = decoded.uid;
       email = decoded.email ?? null;
       emailVerified = decoded.email_verified === true;

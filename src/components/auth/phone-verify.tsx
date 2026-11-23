@@ -11,6 +11,7 @@ import { Field, Input } from "@/components/ui/form";
 import { friendlyAuthError, useAuth } from "@/hooks/use-auth";
 import { api } from "@/lib/api-client";
 import { getFirebaseAuth } from "@/lib/firebase/client";
+import { usesFirebase } from "@/lib/mode";
 
 /**
  * Phone OTP verification.
@@ -55,7 +56,7 @@ export function PhoneVerify({ initialPhone, onVerified }: { initialPhone?: strin
     if (!/^\+[1-9]\d{7,14}$/.test(normalized)) { setError("Enter your number with country code, e.g. +919876543210"); return; }
     setBusy(true);
     try {
-      if (mode === "firebase") {
+      if (usesFirebase(mode)) {
         const auth = getFirebaseAuth()!;
         confirmation.current = await linkWithPhoneNumber(auth.currentUser!, normalized, getVerifier());
       }
@@ -69,7 +70,7 @@ export function PhoneVerify({ initialPhone, onVerified }: { initialPhone?: strin
   const confirm = async () => {
     setBusy(true); setError(null);
     try {
-      if (mode === "firebase") await confirmation.current!.confirm(code);
+      if (usesFirebase(mode)) await confirmation.current!.confirm(code);
       const { profile: p } = await api<{ profile: UserProfile }>("/api/me/phone", { body: { phone: normalized, code: mode === "demo" ? code : undefined } });
       setProfile(p); setStage("done"); onVerified?.(p);
     } catch (e) { setError(friendlyAuthError(e)); } finally { setBusy(false); }

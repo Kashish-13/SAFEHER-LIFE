@@ -2,7 +2,7 @@ import { newUserProfile } from "@/core/defaults";
 import type { EmergencyEvent, EmergencyPreferences, EmergencyResponse, PrivacySettings, TrustedContact, UserProfile, VoiceSosSettings } from "@/core/types";
 import { audit } from "../audit";
 import type { AuthContext } from "../auth";
-import { isFirebaseAdminConfigured } from "../env";
+import { isFirebaseBackend } from "../env";
 import { notFound } from "../errors";
 import { adminAuth } from "../firebase-admin";
 import { nowISO } from "../ids";
@@ -50,7 +50,7 @@ export async function updateSettings(
 
 /** Records that Firebase Auth has verified the user's phone (called after client-side OTP). */
 export async function markPhoneVerified(uid: string, phone: string): Promise<UserProfile> {
-  if (isFirebaseAdminConfigured()) {
+  if (isFirebaseBackend()) {
     const record = await adminAuth().getUser(uid);
     if (record.phoneNumber !== phone) throw notFound("Phone number is not verified on this account");
   }
@@ -69,7 +69,7 @@ export async function registerPushToken(uid: string, token: string): Promise<voi
  * Demo: bumps tokenVersion so previously issued demo tokens stop working.
  */
 export async function revokeAllSessions(uid: string): Promise<void> {
-  if (isFirebaseAdminConfigured()) await adminAuth().revokeRefreshTokens(uid);
+  if (isFirebaseBackend()) await adminAuth().revokeRefreshTokens(uid);
   await getStore().transact<UserProfile>(COLLECTIONS.users, uid, (cur) => ({ tokenVersion: (cur.tokenVersion ?? 0) + 1, updatedAt: nowISO() }));
   await audit(uid, "user.sessions_revoked", "user", uid);
 }
@@ -85,7 +85,7 @@ export async function revokeAllSessions(uid: string): Promise<void> {
 export async function deleteAccount(uid: string): Promise<void> {
   const store = getStore();
   await audit(uid, "user.deletion_started", "user", uid);
-  if (isFirebaseAdminConfigured()) await adminAuth().revokeRefreshTokens(uid).catch(() => {});
+  if (isFirebaseBackend()) await adminAuth().revokeRefreshTokens(uid).catch(() => {});
 
   const owned: [CollectionName, string][] = [
     [COLLECTIONS.trustedContacts, "ownerId"],
@@ -113,6 +113,6 @@ export async function deleteAccount(uid: string): Promise<void> {
   await Promise.all(responses.map((r) => store.update(COLLECTIONS.emergencyResponses, r.id, { contactUserId: null })));
 
   await store.delete(COLLECTIONS.users, uid);
-  if (isFirebaseAdminConfigured()) await adminAuth().deleteUser(uid);
+  if (isFirebaseBackend()) await adminAuth().deleteUser(uid);
   await audit(uid, "user.deleted", "user", uid);
 }
