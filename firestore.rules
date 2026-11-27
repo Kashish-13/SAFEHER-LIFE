@@ -25,9 +25,10 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // Owner sees their contacts; a linked contact sees the link that points to them.
+    // Owner sees their contacts. A linked contact reads its own link only through the API,
+    // because the document also holds what the owner typed (name, email, phone) and claim data.
     match /trustedContacts/{id} {
-      allow read: if signedIn() && (resource.data.ownerId == request.auth.uid || resource.data.contactUserId == request.auth.uid);
+      allow read: if signedIn() && resource.data.ownerId == request.auth.uid;
       allow write: if false;
     }
 
@@ -36,14 +37,17 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // The person in danger, or a contact who was actually alerted for THIS event.
+    // OWNER ONLY. Contacts read emergencies through GET /api/emergencies/:id, which
+    // enforces the 24 h post-closure window and immediate revocation on block/remove.
+    // Those time/link checks can't be expressed reliably in rules, so direct reads are denied.
     match /emergencyEvents/{id} {
-      allow read: if signedIn() && (resource.data.userId == request.auth.uid || request.auth.uid in resource.data.authorizedViewerIds);
+      allow read: if signedIn() && resource.data.userId == request.auth.uid;
       allow write: if false;
     }
 
+    // Owner only, for the same reason as emergencyEvents (contacts go through the API).
     match /emergencyResponses/{id} {
-      allow read: if signedIn() && (resource.data.ownerId == request.auth.uid || resource.data.contactUserId == request.auth.uid);
+      allow read: if signedIn() && resource.data.ownerId == request.auth.uid;
       allow write: if false;
     }
 

@@ -58,6 +58,8 @@ export interface UserProfile {
   id: string;
   fullName: string;
   email: string;
+  /** Mirrors the identity provider's verified-email flag (Firebase `email_verified`). */
+  emailVerified: boolean;
   phone: string | null;
   phoneVerified: boolean;
   photoURL: string | null;
@@ -69,13 +71,35 @@ export interface UserProfile {
   privacy: PrivacySettings;
   /** Firebase Cloud Messaging registration tokens for this user's devices. */
   fcmTokens: string[];
+  /** Incremented by "sign out everywhere"; demo session tokens carry it and are rejected once stale. */
+  tokenVersion: number;
   disabled: boolean;
   createdAt: ISODate;
   updatedAt: ISODate;
 }
 
 export type ContactPriority = "primary" | "secondary";
-export type InvitationStatus = "pending" | "accepted" | "rejected" | "blocked" | "removed";
+/**
+ * Invitation lifecycle:
+ *   pending ──(invitee claims link)──► awaiting_approval ──(owner approves)──► accepted
+ *      │                                     └──(owner rejects)──► claim_rejected ──(resend)──► pending
+ *      └──(invitee declines)──► rejected ──(resend)──► pending
+ * Only "accepted" grants any access (alerts, location, emergency details).
+ */
+export type InvitationStatus = "pending" | "awaiting_approval" | "accepted" | "rejected" | "claim_rejected" | "blocked" | "removed";
+
+/** Identity of the account that actually used an invitation link, captured server-side. */
+export interface InvitationClaim {
+  userId: string;
+  displayName: string;
+  email: string | null;
+  emailVerified: boolean;
+  phone: string | null;
+  phoneVerified: boolean;
+  /** Whether the claimant's verified identity matches what the owner typed (null = owner gave none). */
+  matchesInvite: { email: boolean | null; phone: boolean | null };
+  claimedAt: ISODate;
+}
 
 export interface TrustedContact {
   id: string;
@@ -86,8 +110,10 @@ export interface TrustedContact {
   relationship: string;
   priority: ContactPriority;
   status: InvitationStatus;
-  /** Set once the invitee accepts with their SafeHer account. */
+  /** Set ONLY when the owner approves the claim. Drives all access. */
   contactUserId: string | null;
+  /** Who used the invitation link. Shown to the owner for approval; kept after approval as the linked identity. */
+  claim: InvitationClaim | null;
   /** SHA-256 hash of the invitation token — the raw token is only ever shown once to the owner. */
   inviteTokenHash: string | null;
   inviteExpiresAt: ISODate | null;
@@ -121,8 +147,10 @@ export interface EmergencyEvent {
   escalationConfig: EscalationConfig;
   /** True for demo / simulated events — no real alerts are sent. */
   isSimulated: boolean;
-  /** Users (contact accounts) authorised to view this event. Used by security rules. */
+  /** Contact accounts alerted for this event. Access also requires an active link and an unexpired window. */
   authorizedViewerIds: string[];
+  /** Set when the event closes (resolved/cancelled) to close time + 24 h. After it, contacts lose access. */
+  viewerAccessExpiresAt: ISODate | null;
   note: string | null;
   createdAt: ISODate;
   updatedAt: ISODate;

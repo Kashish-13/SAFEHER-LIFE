@@ -1,5 +1,5 @@
 import "server-only";
-import { isFirebaseAdminConfigured } from "../env";
+import { isDemoMode, isFirebaseBackend } from "../env";
 import { adminDb } from "../firebase-admin";
 import { FirestoreStore } from "./firestore";
 import { MemoryStore } from "./memory";
@@ -8,19 +8,21 @@ import type { DataStore } from "./types";
 /**
  * Process-wide store singleton. Cached on globalThis so Next.js dev hot-reloads
  * don't wipe demo data on every edit.
+ *  - Firebase and emulator modes: Firestore (the emulator via FIRESTORE_EMULATOR_HOST).
+ *  - Everything else: in-memory.
  */
 const g = globalThis as unknown as { __safeherStore?: DataStore; __safeherSeeded?: Promise<void> };
 
 export function getStore(): DataStore {
   if (!g.__safeherStore) {
-    g.__safeherStore = isFirebaseAdminConfigured() ? new FirestoreStore(adminDb()) : new MemoryStore();
+    g.__safeherStore = isFirebaseBackend() ? new FirestoreStore(adminDb()) : new MemoryStore();
   }
   return g.__safeherStore;
 }
 
-/** Ensures demo data is seeded exactly once per process (no-op in Firebase mode). */
+/** Seeds the fictional demo data exactly once per process, and ONLY in demo mode (never Firebase/emulator). */
 export async function ensureSeeded(): Promise<void> {
-  if (isFirebaseAdminConfigured()) return;
+  if (!isDemoMode()) return;
   if (!g.__safeherSeeded) {
     g.__safeherSeeded = import("../demo/seed").then((m) => m.seedDemoData(getStore()));
   }

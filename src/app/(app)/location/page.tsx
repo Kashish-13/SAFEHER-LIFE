@@ -27,7 +27,7 @@ export default function LocationPage() {
   const { permission, getCurrent } = useGeolocation();
   const sessions = useApi<{ sessions: Session[] }>("/api/location/sessions");
   const contacts = useApi<{ contacts: TrustedContact[] }>("/api/contacts");
-  const shared = useApi<{ shared: Shared[] }>("/api/location/shared-with-me", { pollMs: 15000 });
+  const shared = useApi<{ shared: Shared[] }>("/api/location/shared-with-me", { pollMs: 30_000 });
   const [contactId, setContactId] = useState("");
   const [mode, setMode] = useState<"always" | "temporary">("temporary");
   const [duration, setDuration] = useState(60);
@@ -151,7 +151,7 @@ export default function LocationPage() {
                     <button type="button" key={m} role="radio" aria-checked={mode === m} onClick={() => setMode(m)}
                       className={`rounded-xl border p-3 text-left text-sm ${mode === m ? "border-accent bg-accent/5 ring-1 ring-accent" : ""}`}>
                       <strong className="block capitalize">{m}</strong>
-                      <span className="text-xs text-muted-foreground">{m === "always" ? "Until you stop it" : "Ends automatically"}</span>
+                      <span className="text-xs text-muted-foreground">{m === "always" ? "Until you stop it · updates only while SafeHer is open" : "Ends automatically"}</span>
                     </button>
                   ))}
                 </div>

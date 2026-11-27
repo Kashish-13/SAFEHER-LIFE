@@ -1,8 +1,8 @@
 import type { EmergencyEvent, Role } from "./types";
 
 /**
- * Central authorization policy. Every API handler consults these functions —
- * hiding a button in the UI is never treated as access control.
+ * Central authorization policy. Every API handler consults these functions.
+ * Hiding a button in the UI is never treated as access control.
  */
 
 export interface Principal {
@@ -13,10 +13,44 @@ export interface Principal {
 export const hasRole = (p: Principal, role: Role) => p.roles.includes(role);
 export const isAdmin = (p: Principal) => hasRole(p, "admin");
 
-/** Owner can always view; linked trusted contacts listed on the event can view. Admins cannot by default. */
-export function canViewEmergency(p: Principal, event: Pick<EmergencyEvent, "userId" | "authorizedViewerIds">): boolean {
-  return event.userId === p.uid || event.authorizedViewerIds.includes(p.uid);
+/** Contacts keep access to a closed (resolved OR cancelled) emergency for this long. */
+export const VIEWER_ACCESS_WINDOW_HOURS = 24;
+
+export function viewerAccessExpiry(closedAtISO: string): string {
+  return new Date(new Date(closedAtISO).getTime() + VIEWER_ACCESS_WINDOW_HOURS * 3_600_000).toISOString();
 }
+
+export type EmergencyAccess =
+  | { allowed: true; as: "owner" | "contact" }
+  | { allowed: false; reason: "not_alerted" | "revoked" | "expired" };
+
+/**
+ * Who may view an emergency:
+ *  - the person who raised it, always (until they delete it or retention removes it);
+ *  - a contact who was alerted for THIS event, only while
+ *      (a) their trusted-contact link is still accepted (block/remove → immediate loss), and
+ *      (b) the event is active, or it closed less than 24 h ago.
+ * Admins get no access here. They use a separately redacted view.
+ */
+export function emergencyAccess(
+  p: Principal,
+  event: Pick<EmergencyEvent, "userId" | "authorizedViewerIds" | "status" | "viewerAccessExpiresAt">,
+  ctx: { now: Date; linkActive: boolean },
+): EmergencyAccess {
+  if (event.userId === p.uid) return { allowed: true, as: "owner" };
+  if (!event.authorizedViewerIds.includes(p.uid)) return { allowed: false, reason: "not_alerted" };
+  if (!ctx.linkActive) return { allowed: false, reason: "revoked" };
+  if (event.status !== "active") {
+    if (!event.viewerAccessExpiresAt || new Date(event.viewerAccessExpiresAt) <= ctx.now) return { allowed: false, reason: "expired" };
+  }
+  return { allowed: true, as: "contact" };
+}
+
+export const ACCESS_DENIED_MESSAGES: Record<"not_alerted" | "revoked" | "expired", string> = {
+  not_alerted: "You don't have access to this emergency.",
+  revoked: "You no longer have access. You are not an active trusted contact for this person.",
+  expired: `Access ended ${VIEWER_ACCESS_WINDOW_HOURS} hours after this emergency was closed.`,
+};
 
 /** Only the person in danger can cancel or resolve their own emergency. */
 export function canManageEmergency(p: Principal, event: Pick<EmergencyEvent, "userId">): boolean {

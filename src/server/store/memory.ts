@@ -54,6 +54,10 @@ export class MemoryStore implements DataStore {
     return docs.map((d) => clone(d) as T);
   }
 
+  async count(collection: CollectionName, options: Pick<QueryOptions, "where"> = {}): Promise<number> {
+    return [...this.col(collection).values()].filter((d) => (options.where ?? []).every((f) => matches(d, f))).length;
+  }
+
   async create<T extends { id: string }>(collection: CollectionName, doc: T): Promise<T> {
     const c = this.col(collection);
     if (c.has(doc.id)) throw new Error(`Document ${collection}/${doc.id} already exists`);

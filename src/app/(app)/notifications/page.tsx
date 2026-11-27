@@ -20,7 +20,7 @@ const ICONS: Record<AppNotification["type"], typeof Bell> = {
 export default function NotificationsPage() {
   const router = useRouter();
   const { refresh } = useSafetyStatus();
-  const { data, loading, error, reload } = useApi<{ notifications: AppNotification[]; unread: number }>("/api/notifications", { pollMs: 10_000 });
+  const { data, loading, error, reload } = useApi<{ notifications: AppNotification[]; unread: number }>("/api/notifications", { pollMs: 30_000 });
 
   const open = async (n: AppNotification) => {
     if (!n.read) api(`/api/notifications/${n.id}`, { method: "PATCH" }).then(() => { reload(); refresh(); }).catch(() => {});

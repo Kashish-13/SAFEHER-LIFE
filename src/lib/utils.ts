@@ -31,6 +31,12 @@ export function initials(name: string) {
   return name.split(" ").filter(Boolean).slice(0, 2).map((p) => p[0]!.toUpperCase()).join("") || "?";
 }
 
+/** Only same-site relative paths are allowed as post-login destinations (no open redirects). */
+export function safeRedirect(next: string | null | undefined, fallback = "/dashboard") {
+  if (!next || !next.startsWith("/") || next.startsWith("//") || next.startsWith("/\\")) return fallback;
+  return next;
+}
+
 export function mapsLink(lat: number, lng: number) {
   return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
 }

@@ -1,10 +1,11 @@
-import type { TrustedContact, UserProfile } from "@/core/types";
+import type { InvitationClaim, TrustedContact, UserProfile } from "@/core/types";
 import type { ContactCreateInput } from "@/core/validation";
 import { audit } from "../audit";
 import { badRequest, conflict, forbidden, notFound } from "../errors";
 import { newId, nowISO, randomToken, sha256 } from "../ids";
 import { getStore } from "../store";
 import { COLLECTIONS, where } from "../store/types";
+import { revokeViewerAccess } from "./emergencies";
 import { createNotification } from "./notifications";
 
 const INVITE_TTL_DAYS = 7;
@@ -12,7 +13,7 @@ const MAX_CONTACTS = 25;
 
 export interface ContactWithInvite {
   contact: TrustedContact;
-  /** Raw invitation link — returned ONCE at creation/resend, never stored or retrievable later. */
+  /** Raw invitation link, returned ONCE at creation/resend, never stored or retrievable later. */
   inviteLink: string | null;
 }
 
@@ -63,6 +64,7 @@ export async function createContact(owner: UserProfile, input: ContactCreateInpu
     priority: input.priority,
     status: "pending",
     contactUserId: null,
+    claim: null,
     inviteTokenHash: invite.hash,
     inviteExpiresAt: invite.expiresAt,
     notifyOnEmergency: input.notifyOnEmergency ?? true,
@@ -72,10 +74,11 @@ export async function createContact(owner: UserProfile, input: ContactCreateInpu
   await store.create(COLLECTIONS.trustedContacts, contact);
 
   const inviteLink = `${appUrl}/invite/${invite.token}`;
-  // If the invitee already has a SafeHer account, deliver the invitation in-app too.
+  // In-app delivery ONLY to an account whose email is VERIFIED. Otherwise anyone could register
+  // with someone else's address and receive their invitation link.
   if (email) {
     const [invitee] = await store.query<UserProfile>(COLLECTIONS.users, { where: [where("email", "==", email)], limit: 1 });
-    if (invitee && invitee.id !== owner.id) {
+    if (invitee && invitee.id !== owner.id && invitee.emailVerified) {
       await createNotification({
         recipientUserId: invitee.id,
         type: "contact_invitation",
@@ -89,15 +92,21 @@ export async function createContact(owner: UserProfile, input: ContactCreateInpu
   return { contact: publicContact(contact), inviteLink };
 }
 
+type ContactAction = "block" | "unblock" | "remove" | "resend_invite" | "approve_claim" | "reject_claim";
+
 export async function updateContact(
   ownerId: string,
   id: string,
-  patch: { name?: string; relationship?: string; priority?: "primary" | "secondary"; notifyOnEmergency?: boolean; action?: "block" | "unblock" | "remove" | "resend_invite" },
+  patch: { name?: string; relationship?: string; priority?: "primary" | "secondary"; notifyOnEmergency?: boolean; action?: ContactAction },
   appUrl: string,
 ): Promise<ContactWithInvite> {
   const store = getStore();
   const c = await getOwnedContact(ownerId, id);
   const { action, ...fields } = patch;
+  if (action === "approve_claim" || action === "reject_claim") {
+    return { contact: publicContact(await decideClaim(ownerId, c, action === "approve_claim" ? "approve" : "reject")), inviteLink: null };
+  }
+
   const next: Partial<TrustedContact> = { ...fields, updatedAt: nowISO() };
   let inviteLink: string | null = null;
 
@@ -105,22 +114,24 @@ export async function updateContact(
     case "block":
       next.status = "blocked";
       next.inviteTokenHash = null;
-      await stopSharesForContact(c.id);
+      await revokeAllAccess(c);
       break;
     case "unblock":
       if (c.status !== "blocked") throw badRequest("Contact is not blocked");
+      // Restores eligibility for FUTURE alerts only. Access to past emergencies stays revoked.
       next.status = c.contactUserId ? "accepted" : "pending";
       break;
     case "remove":
       next.status = "removed";
       next.inviteTokenHash = null;
-      await stopSharesForContact(c.id);
+      await revokeAllAccess(c);
       await removeFromCircles(ownerId, c.id);
       break;
     case "resend_invite": {
-      if (c.status !== "pending" && c.status !== "rejected") throw badRequest("Only pending or declined invitations can be resent");
+      if (!["pending", "rejected", "claim_rejected"].includes(c.status)) throw badRequest("Only pending or declined invitations can be resent");
       const invite = newInvite();
       next.status = "pending";
+      next.claim = null;
       next.inviteTokenHash = invite.hash;
       next.inviteExpiresAt = invite.expiresAt;
       inviteLink = `${appUrl}/invite/${invite.token}`;
@@ -132,10 +143,16 @@ export async function updateContact(
   return { contact: publicContact(updated), inviteLink };
 }
 
+/** Immediately cuts every kind of access the contact had: live location AND past/active emergencies. */
+async function revokeAllAccess(c: TrustedContact) {
+  await stopSharesForContact(c.id);
+  if (c.contactUserId) await revokeViewerAccess(c.ownerId, c.contactUserId);
+}
+
 async function stopSharesForContact(contactId: string) {
   const store = getStore();
   const sessions = await store.query<{ id: string; status: string }>(COLLECTIONS.locationSessions, { where: [where("contactId", "==", contactId)] });
-  await Promise.all(sessions.filter((s) => s.status !== "stopped").map((s) => store.update(COLLECTIONS.locationSessions, s.id, { status: "stopped", updatedAt: nowISO() })));
+  await Promise.all(sessions.filter((s) => s.status !== "stopped").map((s) => store.update(COLLECTIONS.locationSessions, s.id, { status: "stopped", lastLocation: null, updatedAt: nowISO() })));
 }
 
 async function removeFromCircles(ownerId: string, contactId: string) {
@@ -153,60 +170,122 @@ async function findByToken(token: string): Promise<TrustedContact> {
   return c;
 }
 
-/** Public-safe invitation preview (no contact details of the owner beyond their name). */
+/** Invitation preview. Reveals only the inviter's name and the intended relationship. */
 export async function lookupInvitation(token: string) {
   const c = await findByToken(token);
   const owner = await getStore().get<UserProfile>(COLLECTIONS.users, c.ownerId);
   return { ownerName: owner?.fullName ?? "A SafeHer user", relationship: c.relationship, priority: c.priority, status: c.status };
 }
 
-export async function respondToInvitation(user: UserProfile, token: string, decision: "accept" | "reject") {
+/**
+ * Step 1 of joining a circle: the invitee CLAIMS the invitation.
+ * - Requires a verified email or phone, so the owner sees a verified identity.
+ * - Consumes the link immediately: a forwarded copy can't be used by anyone else.
+ * - Grants NO access. The owner must approve the claimant's identity (decideClaim).
+ */
+export async function respondToInvitation(user: UserProfile, identity: { emailVerified: boolean; email: string | null }, token: string, decision: "accept" | "reject") {
   const store = getStore();
   const c = await findByToken(token);
   if (c.ownerId === user.id) throw badRequest("You can't accept your own invitation");
   if (c.status !== "pending") throw conflict("This invitation is no longer pending");
+  const owner = await store.get<UserProfile>(COLLECTIONS.users, c.ownerId);
+  const ownerName = owner?.fullName ?? "the sender";
 
-  const accepted = decision === "accept";
+  if (decision === "reject") {
+    const updated = await store.update<TrustedContact>(COLLECTIONS.trustedContacts, c.id, { status: "rejected", inviteTokenHash: null, updatedAt: nowISO() });
+    await createNotification({ recipientUserId: c.ownerId, type: "invitation_response", title: `${c.name} declined your invitation`, body: "You can resend the invitation or add someone else.", link: "/circle" });
+    await audit(user.id, "invitation.reject", "trustedContact", c.id);
+    return publicContact(updated);
+  }
+
+  if (!identity.emailVerified && !user.phoneVerified) {
+    throw forbidden(`Verify your email address or phone number first, so ${ownerName} can confirm it's really you.`);
+  }
+  const mine = await store.query<TrustedContact>(COLLECTIONS.trustedContacts, { where: [where("ownerId", "==", c.ownerId), where("claim.userId", "==", user.id)] });
+  if (mine.some((m) => m.status === "accepted" || m.status === "awaiting_approval")) {
+    throw conflict(`You're already in ${ownerName}'s circle or waiting for their approval`);
+  }
+
+  const verifiedEmail = identity.emailVerified ? (identity.email ?? user.email).toLowerCase() : null;
+  const claim: InvitationClaim = {
+    userId: user.id,
+    displayName: user.fullName,
+    email: identity.email ?? user.email ?? null,
+    emailVerified: identity.emailVerified,
+    phone: user.phone,
+    phoneVerified: user.phoneVerified,
+    matchesInvite: {
+      email: c.email ? verifiedEmail === c.email.toLowerCase() : null,
+      phone: c.phone ? Boolean(user.phoneVerified && user.phone === c.phone) : null,
+    },
+    claimedAt: nowISO(),
+  };
   const updated = await store.update<TrustedContact>(COLLECTIONS.trustedContacts, c.id, {
-    status: accepted ? "accepted" : "rejected",
-    contactUserId: accepted ? user.id : null,
-    inviteTokenHash: null, // single-use
+    status: "awaiting_approval",
+    claim,
+    inviteTokenHash: null, // single use, consumed by this claim
     updatedAt: nowISO(),
   });
-  if (accepted && !user.roles.includes("trusted_contact")) {
-    await store.update<UserProfile>(COLLECTIONS.users, user.id, { roles: [...user.roles, "trusted_contact"] });
-  }
+  const mismatch = claim.matchesInvite.email === false || claim.matchesInvite.phone === false;
   await createNotification({
     recipientUserId: c.ownerId,
     type: "invitation_response",
-    title: accepted ? `${user.fullName} joined your emergency circle` : `${c.name} declined your invitation`,
-    body: accepted ? "They will now receive your emergency alerts." : "You can resend the invitation or add someone else.",
+    title: `Approve ${user.fullName} as your ${c.relationship.toLowerCase()}?`,
+    body: mismatch
+      ? `Someone accepted the invitation you sent to ${c.name}, but their account details don't match what you entered. Only approve if you're sure it's them.`
+      : `${user.fullName} accepted your invitation. Check it's really them, then approve so they can receive your alerts.`,
     link: "/circle",
   });
-  await audit(user.id, `invitation.${decision}`, "trustedContact", c.id);
+  await audit(user.id, "invitation.claimed", "trustedContact", c.id, { emailMatch: claim.matchesInvite.email, phoneMatch: claim.matchesInvite.phone });
   return publicContact(updated);
 }
 
-/** People who have added the caller as their trusted contact. */
+/** Step 2: the OWNER approves or rejects the identity that claimed the invitation. */
+async function decideClaim(ownerId: string, c: TrustedContact, decision: "approve" | "reject") {
+  const store = getStore();
+  if (c.status !== "awaiting_approval" || !c.claim) throw conflict("There is no request waiting for your approval");
+  const claimant = await store.get<UserProfile>(COLLECTIONS.users, c.claim.userId);
+  const owner = await store.get<UserProfile>(COLLECTIONS.users, ownerId);
+  const ownerName = owner?.fullName ?? "The sender";
+
+  if (decision === "approve") {
+    if (!claimant || claimant.disabled) throw conflict("This account is no longer available");
+    const updated = await store.update<TrustedContact>(COLLECTIONS.trustedContacts, c.id, { status: "accepted", contactUserId: claimant.id, updatedAt: nowISO() });
+    if (!claimant.roles.includes("trusted_contact")) {
+      await store.update<UserProfile>(COLLECTIONS.users, claimant.id, { roles: [...claimant.roles, "trusted_contact"] });
+    }
+    await createNotification({ recipientUserId: claimant.id, type: "invitation_response", title: `${ownerName} approved you as a trusted contact`, body: "You'll now receive their emergency alerts.", link: "/circle" });
+    await audit(ownerId, "invitation.claim_approved", "trustedContact", c.id);
+    return updated;
+  }
+  const updated = await store.update<TrustedContact>(COLLECTIONS.trustedContacts, c.id, { status: "claim_rejected", contactUserId: null, updatedAt: nowISO() });
+  if (claimant) {
+    await createNotification({ recipientUserId: claimant.id, type: "invitation_response", title: "Your request wasn't approved", body: `${ownerName} didn't approve adding your account to their emergency circle.`, link: null });
+  }
+  await audit(ownerId, "invitation.claim_rejected", "trustedContact", c.id);
+  return updated;
+}
+
+/** Circles the caller belongs to, or is waiting to be approved for. */
 export async function listIncoming(uid: string) {
   const store = getStore();
-  const links = await store.query<TrustedContact>(COLLECTIONS.trustedContacts, { where: [where("contactUserId", "==", uid)] });
-  const active = links.filter((l) => l.status === "accepted");
+  const links = await store.query<TrustedContact>(COLLECTIONS.trustedContacts, { where: [where("claim.userId", "==", uid)] });
+  const visible = links.filter((l) => l.status === "accepted" || l.status === "awaiting_approval");
   return Promise.all(
-    active.map(async (l) => {
+    visible.map(async (l) => {
       const owner = await store.get<UserProfile>(COLLECTIONS.users, l.ownerId);
-      return { linkId: l.id, ownerId: l.ownerId, ownerName: owner?.fullName ?? "Unknown", relationship: l.relationship, priority: l.priority, since: l.updatedAt };
+      return { linkId: l.id, ownerId: l.ownerId, ownerName: owner?.fullName ?? "Unknown", relationship: l.relationship, priority: l.priority, status: l.status, since: l.updatedAt };
     }),
   );
 }
 
-/** A trusted contact can step down from someone's circle at any time. */
+/** A trusted contact (or pending claimant) can step down at any time. Access ends immediately. */
 export async function leaveCircle(uid: string, linkId: string) {
   const store = getStore();
   const l = await store.get<TrustedContact>(COLLECTIONS.trustedContacts, linkId);
-  if (!l || l.contactUserId !== uid) throw notFound();
+  if (!l || l.claim?.userId !== uid || !["accepted", "awaiting_approval"].includes(l.status)) throw notFound();
+  await revokeAllAccess(l);
   await store.update<TrustedContact>(COLLECTIONS.trustedContacts, linkId, { status: "removed", contactUserId: null, updatedAt: nowISO() });
-  await stopSharesForContact(linkId);
   await createNotification({ recipientUserId: l.ownerId, type: "invitation_response", title: `${l.name} left your emergency circle`, body: "Consider adding another trusted contact.", link: "/circle" });
   await audit(uid, "contact.left", "trustedContact", linkId);
 }
