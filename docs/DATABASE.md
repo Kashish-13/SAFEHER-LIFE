@@ -8,6 +8,21 @@ Rules: [`firestore.rules`](../firestore.rules). Indexes: [`firestore.indexes.jso
 * **All writes go through the API (Admin SDK).** Client SDKs may only read, as listed per collection. Everything else is denied.
 * Coordinates are never written to `auditLogs`.
 
+**Store contract (Phase 1 E4).** Services use the `DataStore` interface ([`src/server/store/types.ts`](../src/server/store/types.ts)),
+implemented by `MemoryStore` (demo mode, unit tests) and `FirestoreStore` (emulator, later production). Both enforce the
+same rules ([`validate.ts`](../src/server/store/validate.ts)) and throw only `StoreError` ([`errors.ts`](../src/server/store/errors.ts)):
+* Plain JSON data only; `undefined` dropped; `Date`/class objects, nested arrays and NaN/Infinity rejected.
+* Ids must not contain `/`, be `.`/`..`, or look like `__x__` (a `/` would address a different Firestore document).
+* `update` returns exactly the saved document (in Firestore it runs as a read+write transaction).
+* `runTransaction`: reads before writes, ≤ 500 writes, retried up to 5 times on conflicts (then `aborted`), so the
+  callback must have no side effects. `batch`: ≤ 500 writes, all or nothing.
+* **Order** is guaranteed only for an explicit `orderBy` on *distinct* values. Neither store promises any order for
+  queries without `orderBy`, or among equal sort values (ties), including which documents a `limit` keeps then; the
+  stores differ there (memory: insertion order, Firestore: document id). `orderBy` excludes documents that lack the sort
+  field (a stored `null` is kept, position not guaranteed). Services needing a stable order must sort by a unique key.
+* HTTP mapping: `not_found` 404, `already_exists`/`aborted` 409, `unavailable`/`quota_exhausted` 503 (with
+  "call 112"), others 500, always with a generic message.
+
 | Collection | Status |
 |---|---|
 | users, trustedContacts, emergencyCircles, emergencyEvents, emergencyResponses, locationSessions, journeySessions, notifications, auditLogs | Implemented |
