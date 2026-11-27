@@ -148,6 +148,8 @@ const blanks = Object.fromEntries(FORBIDDEN.map((k) => [k, ""]));
 // server (169.254.169.254) for credentials. Nothing should ask it to; this makes sure.
 const childEnv = { ...process.env, ...blanks, ...fileEnv, NEXT_DIST_DIR: DIST_DIR, METADATA_SERVER_DETECTION: "none" };
 const nextBin = join(ROOT, "node_modules", "next", "dist", "bin", "next");
-const args = command === "build" ? ["build"] : [command, "-p", PORT];
+// Bind to loopback only: test-data builds must not be reachable from the local network.
+// (Phone testing still works through USB port forwarding to localhost.)
+const args = command === "build" ? ["build"] : [command, "-p", PORT, "-H", "127.0.0.1"];
 const child = spawn(process.execPath, [nextBin, ...args], { cwd: ROOT, env: childEnv, stdio: "inherit" });
 child.on("exit", (code) => process.exit(code ?? 1));
