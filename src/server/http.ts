@@ -6,6 +6,20 @@ import { requireAuth, type AuthContext } from "./auth";
 import { assertServerConfigured, ConfigError } from "./env";
 import { ApiError, badRequest } from "./errors";
 import { checkRateLimit, RATE_LIMITS, type RateLimitRule } from "./rate-limit";
+import { StoreError, type StoreErrorCode } from "./store/errors";
+
+/**
+ * Store failures → HTTP. Messages are generic: store details (paths, project ids) are
+ * logged on the server only. Quota exhaustion keeps the 112 advice visible, because the
+ * person may be trying to raise an emergency.
+ */
+const STORE_ERROR_HTTP: Partial<Record<StoreErrorCode, { status: number; message: string }>> = {
+  not_found: { status: 404, message: "Not found" },
+  already_exists: { status: 409, message: "This was changed by someone else at the same moment. Please try again." },
+  aborted: { status: 409, message: "This was changed by someone else at the same moment. Please try again." },
+  unavailable: { status: 503, message: "The service is temporarily unavailable. Please try again. If you are in danger, call 112." },
+  quota_exhausted: { status: 503, message: "The service is over capacity right now. If you are in danger, call 112." },
+};
 
 type Params = Record<string, string>;
 
@@ -34,6 +48,12 @@ export function errorResponse(err: unknown) {
     const res = NextResponse.json({ error: { code: err.code, message: err.message, details: err.details } }, { status: err.status });
     if (err.status === 429) res.headers.set("Retry-After", String((err.details as { retryAfterSeconds: number }).retryAfterSeconds));
     return res;
+  }
+  if (err instanceof StoreError) {
+    console.error(`[store] ${err.code}: ${err.message}`);
+    const mapped = STORE_ERROR_HTTP[err.code];
+    if (mapped) return NextResponse.json({ error: { code: err.code, message: mapped.message } }, { status: mapped.status });
+    return NextResponse.json({ error: { code: "internal_error", message: "Something went wrong. Please try again." } }, { status: 500 });
   }
   if (err instanceof ZodError) {
     return NextResponse.json(

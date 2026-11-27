@@ -35,11 +35,25 @@ Local only, project `demo-safeher-life`, no real Firebase project. Setup, ports 
 
 ```powershell
 npm run test:rules      # Firestore security-rules tests (tests/rules), inside the Firestore emulator
-npm run test:emulator   # store/service/auth tests (tests/emulator), inside the Auth + Firestore emulators
+npm run test:emulator   # store tests (tests/emulator, vitest.emulator.config.ts), inside the Auth + Firestore emulators
 ```
 
-Both start the emulators, run the tests, and shut the emulators down again. The test folders are filled in later Phase 1
-steps (E4–E7); until then the commands only check the emulators start and stop cleanly.
+Both start throwaway emulators, run the tests, and shut the emulators down again. `npm test` never needs Java or an
+emulator: `tests/emulator/**` and `tests/rules/**` are excluded from it. `tests/rules` is filled in at E6.
+
+### Store contract (E4)
+
+`tests/store/contract.ts` defines every `DataStore` rule (see `src/server/store/types.ts`) once and runs it against:
+
+* `MemoryStore` in `tests/store/memory-store.test.ts` (part of `npm test`), and
+* `FirestoreStore` on the local emulator in `tests/emulator/firestore-store.test.ts`.
+
+`tests/emulator/parity.test.ts` runs one scripted sequence (claim, SOS batch, escalation, revocation, failures) on both
+stores and requires identical results and error codes. The emulator tests refuse to run unless `FIRESTORE_EMULATOR_HOST`
+is a loopback address, the project is `demo-safeher-life` and no credential variable is set (`tests/emulator/harness.ts`).
+
+`tests/server/demo-order.test.ts` pins the order demo users see today (all seeded records share one `createdAt`, so
+tie order is visible). If it fails, a change altered demo-mode screens; decide that deliberately.
 
 ## Phase 0 security coverage
 

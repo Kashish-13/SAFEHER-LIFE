@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 import path from "node:path";
 
 export default defineConfig({
@@ -12,6 +12,8 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["tests/**/*.test.ts"],
+    // Emulator and rules tests need the local Firebase emulators: `npm run test:emulator` / `test:rules`.
+    exclude: [...configDefaults.exclude, "tests/emulator/**", "tests/rules/**"],
     env: { SAFEHER_FORCE_DEMO: "true", DEMO_SESSION_SECRET: "test-secret-for-vitest-only-0123456789" },
   },
 });
