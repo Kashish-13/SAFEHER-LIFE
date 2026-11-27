@@ -8,7 +8,7 @@ export const POST = authed(
   async ({ req, auth }) => {
     const profile = requireProfile(auth);
     const { token, decision } = await parseBody(req, invitationResponseSchema);
-    return { contact: await respondToInvitation(profile, token, decision) };
+    return { contact: await respondToInvitation(profile, { emailVerified: auth.emailVerified, email: auth.email }, token, decision) };
   },
   { rateLimit: RATE_LIMITS.auth },
 );

@@ -24,6 +24,13 @@ export class FirestoreStore implements DataStore {
     return snap.docs.map((d) => d.data() as T);
   }
 
+  async count(collection: CollectionName, options: Pick<QueryOptions, "where"> = {}): Promise<number> {
+    let q: Query = this.db.collection(collection);
+    for (const f of options.where ?? []) q = q.where(f.field, f.op, f.value);
+    const snap = await q.count().get();
+    return snap.data().count;
+  }
+
   async create<T extends { id: string }>(collection: CollectionName, doc: T): Promise<T> {
     await this.db.collection(collection).doc(doc.id).create(doc as FirebaseFirestore.DocumentData);
     return doc;

@@ -33,6 +33,8 @@ export interface QueryOptions {
 export interface DataStore {
   get<T>(collection: CollectionName, id: string): Promise<T | null>;
   query<T>(collection: CollectionName, options?: QueryOptions): Promise<T[]>;
+  /** Counts matching documents. Firestore bills an aggregate count as ~1 read per 1,000 matches, not per document. */
+  count(collection: CollectionName, options?: Pick<QueryOptions, "where">): Promise<number>;
   create<T extends { id: string }>(collection: CollectionName, doc: T): Promise<T>;
   update<T>(collection: CollectionName, id: string, patch: Partial<T>): Promise<T>;
   delete(collection: CollectionName, id: string): Promise<void>;

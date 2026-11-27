@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, FlaskConical, LogOut, Phone, Siren } from "lucide-react";
+import { Bell, FlaskConical, LogOut, Phone, Siren, UserCheck } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
@@ -11,7 +11,7 @@ import { cn, initials } from "@/lib/utils";
 import { BOTTOM_NAV, NAV_GROUPS } from "./nav-config";
 
 function EmergencyBanners() {
-  const { activeEmergency, incomingAlerts } = useSafetyStatus();
+  const { activeEmergency, incomingAlerts, pendingApprovals } = useSafetyStatus();
   const pathname = usePathname();
   const pending = incomingAlerts.filter((a) => a.myResponse !== "acknowledged" && a.myResponse !== "declined");
   return (
@@ -26,6 +26,11 @@ function EmergencyBanners() {
           <Siren className="size-4 animate-pulse" /> {a.isSimulated && "[SIMULATED] "}{a.fromName} needs help. Tap to respond.
         </Link>
       ))}
+      {pendingApprovals > 0 && pathname !== "/circle" && (
+        <Link href="/circle" className="flex items-center justify-center gap-2 bg-primary px-4 py-2 text-sm font-semibold text-white">
+          <UserCheck className="size-4" /> {pendingApprovals} {pendingApprovals === 1 ? "person is" : "people are"} waiting for your approval to join your circle
+        </Link>
+      )}
     </>
   );
 }
@@ -59,7 +64,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </nav>
         <div className="border-t p-3">
           <Link href="/sos" className="mb-2 flex items-center justify-center gap-2 rounded-xl bg-emergency py-3 text-sm font-bold text-white shadow-sm hover:bg-emergency/90"><Siren className="size-4" /> SOS</Link>
-          <button onClick={async () => { await signOut(); router.push("/login"); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground hover:bg-secondary">
+          <button onClick={() => signOut({ redirectTo: "/login" })} className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground hover:bg-secondary">
             <LogOut className="size-4" /> Sign out
           </button>
         </div>

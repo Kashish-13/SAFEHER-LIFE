@@ -6,6 +6,7 @@ SafeHer is a personal safety and emergency response platform. One emergency trig
 primary trusted contact is alerted simultaneously, delivery and acknowledgement are tracked honestly, and if no one
 acknowledges in time the alert escalates to secondary contacts automatically, exactly once.
 
+> **SAFEHER-LIFE is not an emergency service. Alert delivery and response cannot be guaranteed. In immediate danger, call India's emergency number 112.**
 
 ---
 
@@ -20,7 +21,10 @@ acknowledges in time the alert escalates to secondary contacts automatically, ex
 | Emergency circles (Family, Friends, …) used to scope SOS | ✅ |
 | Manual SOS: optional confirmation, cancel window, location attached if allowed, dedup of double presses | ✅ |
 | Emergency response dashboard: per-contact Sent → Delivered → Acknowledged / Declined / Failed | ✅ |
-| Smart escalation to secondary contacts (configurable, idempotent, no duplicates) | ✅ |
+| Smart escalation to secondary contacts (configurable, idempotent, no duplicates) | 🟡 Logic tested; runs only while the owner's emergency screen is open (+ daily cron). Server-side scheduler: Phase 2 |
+| Owner approves who joins the circle (sees the real claimant identity; forwarded links grant nothing) | ✅ |
+| Contacts lose emergency access 24 h after resolve/cancel; immediately on block/remove/leave | ✅ |
+| Sign out everywhere; account deletion requires recent sign-in | ✅ |
 | Notification centre (in-app, live-polled) | ✅ |
 | Push: server-side FCM dispatch + token API | ✅ (web service-worker registration is [next](docs/ROADMAP.md)) |
 | Family location sharing: always/temporary, pause/resume/stop, expiry, live updates while open | ✅ |
@@ -48,7 +52,8 @@ With no Firebase variables set, SafeHer starts in **demo mode**: fictional perso
 admin console.
 
 ```bash
-npm test             # 65+ unit & integration tests (vitest)
+npm test             # unit & integration tests (vitest)
+npm run test:e2e     # browser tests (Playwright), see docs/TESTING.md
 npm run typecheck
 npm run build
 ```

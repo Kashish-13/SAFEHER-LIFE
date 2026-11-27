@@ -82,7 +82,7 @@ export const contactUpdateSchema = z
     relationship: requiredText(40, "Relationship"),
     priority: z.enum(["primary", "secondary"]),
     notifyOnEmergency: z.boolean(),
-    action: z.enum(["block", "unblock", "remove", "resend_invite"]),
+    action: z.enum(["block", "unblock", "remove", "resend_invite", "approve_claim", "reject_claim"]),
   })
   .partial();
 

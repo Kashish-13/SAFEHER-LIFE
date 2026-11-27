@@ -39,6 +39,22 @@ describe("authentication", () => {
   });
 });
 
+describe("rate limiting", () => {
+  it("authenticated traffic does not consume the public sign-in budget", async () => {
+    const { GET: status } = await import("@/app/api/status/route");
+    for (let i = 0; i < 12; i++) await status(req("GET", "/api/status", { as: "demo_priya" }), params());
+    const ok = await demoLogin(req("POST", "/api/demo/session", { body: { personaId: "demo_anita" } }));
+    expect(ok.status).toBe(200);
+  });
+
+  it("public sign-in is still limited to 10 per minute per IP", async () => {
+    const statuses: number[] = [];
+    for (let i = 0; i < 11; i++) statuses.push((await demoLogin(req("POST", "/api/demo/session", { body: { personaId: "demo_anita" } }))).status);
+    expect(statuses.slice(0, 10).every((s) => s === 200)).toBe(true);
+    expect(statuses[10]).toBe(429);
+  });
+});
+
 describe("role-based authorization (enforced server-side)", () => {
   it("blocks non-admins from admin endpoints", async () => {
     expect((await adminStats(req("GET", "/api/admin/stats", { as: "demo_priya" }), params())).status).toBe(403);

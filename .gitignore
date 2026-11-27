@@ -1,5 +1,9 @@
 node_modules/
 .next/
+.next-*/
+test-results/
+playwright-report/
+gate-a/
 out/
 coverage/
 *.tsbuildinfo
@@ -11,3 +15,14 @@ next-env.d.ts
 service-account*.json
 .DS_Store
 npm-debug.log*
+
+# Firebase Emulator Suite: local data exports, caches and debug logs.
+# (.env.emulator IS committed: it holds only placeholders and local addresses.)
+.emulator-data/
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
+firestore-debug.log
+ui-debug.log
+database-debug.log
+pubsub-debug.log

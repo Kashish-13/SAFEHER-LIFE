@@ -6,8 +6,18 @@
       { "fieldPath": "userId", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" } ] },
     { "collectionGroup": "emergencyEvents", "queryScope": "COLLECTION", "fields": [
       { "fieldPath": "userId", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "ASCENDING" } ] },
+    { "collectionGroup": "emergencyEvents", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "userId", "order": "ASCENDING" }, { "fieldPath": "authorizedViewerIds", "arrayConfig": "CONTAINS" } ] },
     { "collectionGroup": "emergencyResponses", "queryScope": "COLLECTION", "fields": [
       { "fieldPath": "eventId", "order": "ASCENDING" }, { "fieldPath": "contactUserId", "order": "ASCENDING" } ] },
+    { "collectionGroup": "emergencyResponses", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "contactUserId", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "ASCENDING" } ] },
+    { "collectionGroup": "trustedContacts", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "ownerId", "order": "ASCENDING" }, { "fieldPath": "status", "order": "ASCENDING" } ] },
+    { "collectionGroup": "trustedContacts", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "ownerId", "order": "ASCENDING" }, { "fieldPath": "contactUserId", "order": "ASCENDING" } ] },
+    { "collectionGroup": "trustedContacts", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "ownerId", "order": "ASCENDING" }, { "fieldPath": "claim.userId", "order": "ASCENDING" } ] },
     { "collectionGroup": "notifications", "queryScope": "COLLECTION", "fields": [
       { "fieldPath": "recipientUserId", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" } ] },
     { "collectionGroup": "notifications", "queryScope": "COLLECTION", "fields": [
