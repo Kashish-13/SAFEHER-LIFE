@@ -17,7 +17,7 @@
     "build:emulator": "node scripts/emulator-app.mjs build",
     "start:emulator": "node scripts/emulator-app.mjs start",
     "test:rules": "firebase emulators:exec --project demo-safeher-life --only firestore \"node node_modules/vitest/vitest.mjs run --dir tests/rules --passWithNoTests\"",
-    "test:emulator": "firebase emulators:exec --project demo-safeher-life --only auth,firestore \"node node_modules/vitest/vitest.mjs run --dir tests/emulator --passWithNoTests\""
+    "test:emulator": "firebase emulators:exec --project demo-safeher-life --only auth,firestore \"node node_modules/vitest/vitest.mjs run --config vitest.emulator.config.ts\""
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.1.2",
