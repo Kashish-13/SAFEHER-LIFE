@@ -1,5 +1,5 @@
 import { newUserProfile } from "@/core/defaults";
-import type { EmergencyEvent, EmergencyPreferences, EmergencyResponse, PrivacySettings, TrustedContact, UserProfile, VoiceSosSettings } from "@/core/types";
+import type { EmergencyEvent, EmergencyPreferences, EmergencyResponse, LocationSession, PrivacySettings, TrustedContact, UserProfile, VoiceSosSettings } from "@/core/types";
 import { audit } from "../audit";
 import type { AuthContext } from "../auth";
 import { isFirebaseBackend } from "../env";
@@ -7,6 +7,7 @@ import { notFound } from "../errors";
 import { adminAuth } from "../firebase-admin";
 import { nowISO } from "../ids";
 import { getStore } from "../store";
+import { batchInChunks } from "../store/batching";
 import { COLLECTIONS, where, type CollectionName } from "../store/types";
 
 /** Returns the caller's profile, creating it on first sign-in. */
@@ -75,23 +76,66 @@ export async function revokeAllSessions(uid: string): Promise<void> {
 }
 
 /**
- * Permanently deletes the user's account and owned data.
- * - Revokes all sessions first, so no device keeps acting as the user mid-deletion.
- * - Deletes everything the user owns.
- * - Where the user is someone ELSE's contact: the link is detached (owner sees it ended),
- *   their access to that person's emergencies is revoked, and the owner's records of
- *   past alerts keep the name the owner typed but lose the account reference.
+ * Permanently deletes the user's account and owned data. RESUMABLE (Phase 1 E5):
+ *
+ * 1. A transaction sets `deletionPendingAt`. From then on authentication rejects the account
+ *    (like a disabled one), so nothing can act as the user mid-deletion.
+ * 2. `completeAccountDeletion` runs every clean-up step. Each step is idempotent (it only touches
+ *    documents still referencing the user), so it can be re-run after any failure.
+ * 3. The user record is deleted LAST, so an interrupted deletion is always found again by the
+ *    cron job (`resumePendingDeletions`), which finishes it.
  */
 export async function deleteAccount(uid: string): Promise<void> {
   const store = getStore();
-  await audit(uid, "user.deletion_started", "user", uid);
+  const now = nowISO();
+  let firstRequest = false;
+  await store.transact<UserProfile>(COLLECTIONS.users, uid, (cur) => {
+    if (cur.deletionPendingAt) return null; // already in progress: just resume
+    firstRequest = true;
+    return { deletionPendingAt: now, updatedAt: now };
+  });
+  if (firstRequest) await audit(uid, "user.deletion_started", "user", uid);
+  await completeAccountDeletion(uid);
+}
+
+/** Every step only matches documents that still reference the user, so re-running is safe. */
+export async function completeAccountDeletion(uid: string): Promise<void> {
+  const store = getStore();
   if (isFirebaseBackend()) await adminAuth().revokeRefreshTokens(uid).catch(() => {});
 
+  // Links where this user is (or asked to be) someone else's trusted contact: detached, each
+  // re-checked in a transaction (the owner sees it ended; access is revoked by the status).
+  const links = await store.query<TrustedContact>(COLLECTIONS.trustedContacts, { where: [where("claim.userId", "==", uid)] });
+  for (const c of links) {
+    await store.transact<TrustedContact>(COLLECTIONS.trustedContacts, c.id, (cur) =>
+      cur.claim?.userId === uid || cur.contactUserId === uid ? { contactUserId: null, claim: null, status: "removed", updatedAt: nowISO() } : null,
+    );
+  }
+  // Location shared WITH the user stops.
+  const shares = await store.query<LocationSession>(COLLECTIONS.locationSessions, { where: [where("contactUserId", "==", uid)] });
+  for (const s of shares) {
+    await store.transact<LocationSession>(COLLECTIONS.locationSessions, s.id, (cur) =>
+      cur.contactUserId === uid ? { status: "stopped", contactUserId: null, lastLocation: null, updatedAt: nowISO() } : null,
+    );
+  }
+  // Removed from other people's emergencies.
+  const viewing = await store.query<EmergencyEvent>(COLLECTIONS.emergencyEvents, { where: [where("authorizedViewerIds", "array-contains", uid)] });
+  for (const e of viewing) {
+    await store.transact<EmergencyEvent>(COLLECTIONS.emergencyEvents, e.id, (cur) =>
+      cur.authorizedViewerIds.includes(uid) ? { authorizedViewerIds: cur.authorizedViewerIds.filter((x) => x !== uid), updatedAt: nowISO() } : null,
+    );
+  }
+  // Owners' records of past alerts keep the name they typed but lose the account reference.
+  const responses = await store.query<EmergencyResponse>(COLLECTIONS.emergencyResponses, { where: [where("contactUserId", "==", uid)] });
+  await batchInChunks(store, responses.map((r) => ({ type: "update" as const, collection: COLLECTIONS.emergencyResponses, id: r.id, patch: { contactUserId: null } })));
+
+  // Everything the user owns, in atomic chunks of ≤ 500 deletes.
   const owned: [CollectionName, string][] = [
     [COLLECTIONS.trustedContacts, "ownerId"],
     [COLLECTIONS.emergencyCircles, "ownerId"],
-    [COLLECTIONS.emergencyEvents, "userId"],
     [COLLECTIONS.emergencyResponses, "ownerId"],
+    [COLLECTIONS.emergencyEvents, "userId"],
+    [COLLECTIONS.activeEmergencies, "userId"],
     [COLLECTIONS.locationSessions, "ownerId"],
     [COLLECTIONS.journeySessions, "userId"],
     [COLLECTIONS.notifications, "recipientUserId"],
@@ -99,20 +143,33 @@ export async function deleteAccount(uid: string): Promise<void> {
   ];
   for (const [col, field] of owned) {
     const docs = await store.query<{ id: string }>(col, { where: [where(field, "==", uid)] });
-    await Promise.all(docs.map((d) => store.delete(col, d.id)));
+    await batchInChunks(store, docs.map((d) => ({ type: "delete" as const, collection: col, id: d.id })));
   }
 
-  // Links where this user is (or asked to be) someone else's trusted contact.
-  const links = await store.query<TrustedContact>(COLLECTIONS.trustedContacts, { where: [where("claim.userId", "==", uid)] });
-  await Promise.all(links.map((c) => store.update(COLLECTIONS.trustedContacts, c.id, { contactUserId: null, claim: null, status: "removed", updatedAt: nowISO() })));
-  const shares = await store.query<{ id: string }>(COLLECTIONS.locationSessions, { where: [where("contactUserId", "==", uid)] });
-  await Promise.all(shares.map((s) => store.update(COLLECTIONS.locationSessions, s.id, { status: "stopped", contactUserId: null, lastLocation: null, updatedAt: nowISO() })));
-  const viewing = await store.query<EmergencyEvent>(COLLECTIONS.emergencyEvents, { where: [where("authorizedViewerIds", "array-contains", uid)] });
-  await Promise.all(viewing.map((e) => store.update(COLLECTIONS.emergencyEvents, e.id, { authorizedViewerIds: e.authorizedViewerIds.filter((x) => x !== uid) })));
-  const responses = await store.query<EmergencyResponse>(COLLECTIONS.emergencyResponses, { where: [where("contactUserId", "==", uid)] });
-  await Promise.all(responses.map((r) => store.update(COLLECTIONS.emergencyResponses, r.id, { contactUserId: null })));
-
+  // The sign-in account, then the user record LAST (it is what makes the deletion resumable).
+  if (isFirebaseBackend()) {
+    await adminAuth().deleteUser(uid).catch((err: { code?: string }) => {
+      if (err?.code !== "auth/user-not-found") throw err; // already gone: fine on a resumed run
+    });
+  }
   await store.delete(COLLECTIONS.users, uid);
-  if (isFirebaseBackend()) await adminAuth().deleteUser(uid);
   await audit(uid, "user.deleted", "user", uid);
+}
+
+/** Cron: finishes deletions that were interrupted (bounded per run; the next run continues). */
+export async function resumePendingDeletions(limit = 20) {
+  const store = getStore();
+  const pending = await store.query<UserProfile>(COLLECTIONS.users, { where: [where("deletionPendingAt", "!=", null)], limit });
+  let completed = 0;
+  const failed: string[] = [];
+  for (const u of pending) {
+    try {
+      await completeAccountDeletion(u.id);
+      completed++;
+    } catch (err) {
+      console.error("[deletion] resume failed", u.id, err);
+      failed.push(u.id);
+    }
+  }
+  return { pending: pending.length, completed, failed: failed.length };
 }

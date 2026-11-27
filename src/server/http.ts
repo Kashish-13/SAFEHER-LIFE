@@ -4,9 +4,10 @@ import { ZodError, type ZodType } from "zod";
 import type { Role } from "@/core/types";
 import { requireAuth, type AuthContext } from "./auth";
 import { assertServerConfigured, ConfigError } from "./env";
-import { ApiError, badRequest } from "./errors";
+import { ApiError, badRequest, notFound } from "./errors";
 import { checkRateLimit, RATE_LIMITS, type RateLimitRule } from "./rate-limit";
 import { StoreError, type StoreErrorCode } from "./store/errors";
+import { isValidDocId } from "./store/validate";
 
 /**
  * Store failures → HTTP. Messages are generic: store details (paths, project ids) are
@@ -84,6 +85,12 @@ export function authed<P extends Params = Params>(
       const auth = await requireAuth(req, options.roles);
       checkRateLimit(`uid:${auth.uid}`, rule);
       const params = (await routeCtx?.params) ?? ({} as P);
+      // Every dynamic route segment ([id], [token]) names a document. An id the store would reject
+      // (e.g. "../users/x", which in Firestore addresses a DIFFERENT document) can't exist, so the
+      // honest answer is a generic 404, before any service or store code runs.
+      for (const value of Object.values(params)) {
+        if (!isValidDocId(value)) throw notFound();
+      }
       const result = await handler({ req, auth, params });
       if (result instanceof Response) return result;
       return NextResponse.json(result ?? { ok: true }, { headers: { "Cache-Control": "no-store" } });

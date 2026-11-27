@@ -52,6 +52,14 @@ emulator: `tests/emulator/**` and `tests/rules/**` are excluded from it. `tests/
 stores and requires identical results and error codes. The emulator tests refuse to run unless `FIRESTORE_EMULATOR_HOST`
 is a loopback address, the project is `demo-safeher-life` and no credential variable is set (`tests/emulator/harness.ts`).
 
+### Service transactions (E5)
+
+Race tests run every approved flow concurrently on `MemoryStore` (`tests/server/e5-*.test.ts`) and the key ones again on
+Firestore's real transaction engine (`tests/emulator/services.test.ts`): duplicate SOS, stale/legacy SOS locks, voice tests
+never blocking a real SOS, acknowledgement vs. dispatch, concurrent escalation, invitation claims, approve vs.
+leave/block/reject, resend vs. claim, startSharing vs. block, the expired-access sweep, retention, interrupted account
+deletion with cron recovery, and URL-id 404s (`e5-url-ids`).
+
 `tests/server/demo-order.test.ts` pins the order demo users see today (all seeded records share one `createdAt`, so
 tie order is visible). If it fails, a change altered demo-mode screens; decide that deliberately.
 

@@ -1,11 +1,26 @@
-import { applyStatus } from "@/core/notification-status";
-import type { EmergencyEvent, EmergencyResponse, UserProfile } from "@/core/types";
+import { applyStatus, canTransition } from "@/core/notification-status";
+import type { EmergencyEvent, EmergencyResponse, ResponseStatus, UserProfile } from "@/core/types";
 import { isFirebaseAdminConfigured } from "../env";
 import { adminMessaging } from "../firebase-admin";
 import { nowISO } from "../ids";
 import { getStore } from "../store";
 import { COLLECTIONS } from "../store/types";
 import { createNotification } from "./notifications";
+
+/**
+ * Records a dispatch outcome WITHOUT ever overwriting what the recipient did.
+ *
+ * Read-modify-write in one transaction, and only FORWARD (core/notification-status): if the
+ * recipient already opened or answered the alert (delivered / acknowledged / declined) while we
+ * were still sending, their status is kept and ours is simply not recorded.
+ */
+async function advance(r: EmergencyResponse, to: ResponseStatus, detail: string): Promise<EmergencyResponse> {
+  const store = getStore();
+  const updated = await store.transact<EmergencyResponse>(COLLECTIONS.emergencyResponses, r.id, (cur) =>
+    cur.status === to || !canTransition(cur.status, to) ? null : applyStatus(cur, to, nowISO(), detail),
+  );
+  return updated ?? (await store.get<EmergencyResponse>(COLLECTIONS.emergencyResponses, r.id)) ?? r;
+}
 
 /**
  * Delivers one emergency alert to one trusted contact, recording ONLY the
@@ -19,15 +34,15 @@ import { createNotification } from "./notifications";
  *
  * SMS/email providers are not integrated yet; contacts without a SafeHer
  * account are reported as failed with an explicit reason rather than faked.
+ *
+ * Called only AFTER the transaction that created the response has committed.
  */
 export async function dispatchAlert(event: EmergencyEvent, response: EmergencyResponse): Promise<EmergencyResponse> {
   const store = getStore();
-  let r = response;
-  const save = async () => store.update<EmergencyResponse>(COLLECTIONS.emergencyResponses, r.id, r);
+  const r = response;
 
   if (!r.contactUserId) {
-    r = applyStatus(r, "failed", nowISO(), "Contact has not joined SafeHer yet. SMS/email alerts are not configured, so they could not be reached — call them directly.");
-    return save();
+    return advance(r, "failed", "Contact has not joined SafeHer yet. SMS/email alerts are not configured, so they could not be reached — call them directly.");
   }
 
   const isEscalation = r.tier === "secondary" && event.escalationLevel > 0;
@@ -51,7 +66,7 @@ export async function dispatchAlert(event: EmergencyEvent, response: EmergencyRe
     console.error("[dispatch] in-app notification failed", err);
   }
 
-  // Push via FCM — never for simulated events.
+  // Push via FCM — never for simulated events, never in emulator mode (FCM isn't emulated).
   if (!event.isSimulated && isFirebaseAdminConfigured()) {
     const contact = await store.get<UserProfile>(COLLECTIONS.users, r.contactUserId);
     const tokens = contact?.fcmTokens ?? [];
@@ -72,8 +87,7 @@ export async function dispatchAlert(event: EmergencyEvent, response: EmergencyRe
     }
   }
 
-  r = details.length > 0
-    ? applyStatus(r, "sent", nowISO(), `Via ${details.join(" + ")}`)
-    : applyStatus(r, "failed", nowISO(), "All delivery channels failed");
-  return save();
+  return details.length > 0
+    ? advance(r, "sent", `Via ${details.join(" + ")}`)
+    : advance(r, "failed", "All delivery channels failed");
 }

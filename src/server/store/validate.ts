@@ -29,6 +29,16 @@ export function validateId(id: unknown): asserts id is string {
   if (Buffer.byteLength(id, "utf8") > 1500) throw invalid("Document id is longer than 1500 bytes");
 }
 
+/** Non-throwing form of validateId, for request input such as URL path parameters. */
+export function isValidDocId(id: unknown): id is string {
+  try {
+    validateId(id);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function checkKey(key: string, path: string) {
   if (key.length === 0) throw invalid(`Empty field name at ${path || "<root>"}`);
   if (RESERVED.test(key)) throw invalid(`Field name ${path}${key} must not match __*__`);

@@ -21,7 +21,9 @@
 | Data rights | Account deletion removes all owned data and detaches links; retention sweep deletes old closed emergencies |
 | Secrets | Only `NEXT_PUBLIC_*` (non-secret) values reach the browser; Admin key server-only; `.env*` git-ignored |
 | Honest UX | Delivery states only after system confirmation; simulated data labelled; no claims of police integration or guaranteed delivery |
-| Testing safety | Simulated triggers never alert real contacts (dry run outside demo mode); push is never sent for simulated events |
+| Testing safety | Simulated triggers never alert real contacts (outside demo mode a voice test is recorded already closed, alerts nobody and can never block a real SOS); push is never sent for simulated events |
+| Concurrency (E5) | Invitation claims, owner approval, block/remove/leave, location sharing, SOS creation, escalation and closing run in store transactions (reads before writes, retried on conflict): one claimant per link; a concurrent approval can't restore a blocked/removed relationship; two SOS presses create one event and one set of alerts; secondary contacts are alerted once. Notifications, alerts and audit entries are written only **after** a successful commit. If an SOS can't be recorded safely the user is told to call 112 |
+| URL ids | Path parameters the store would reject (e.g. containing `/`) get a generic 404 before any service runs |
 
 ## Known limitations / production hardening
 

@@ -32,18 +32,23 @@ export async function adminStats() {
 
 export async function adminListUsers() {
   const users = await getStore().query<UserProfile>(COLLECTIONS.users, { orderBy: { field: "createdAt", direction: "desc" }, limit: 200 });
-  return users.map(publicUser);
+  // Newest first; the id breaks ties so both stores give the same order.
+  return users.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id)).map(publicUser);
 }
 
 export async function adminUpdateUser(actorId: string, userId: string, input: { roles: Role[]; disabled?: boolean }) {
-  const store = getStore();
-  const u = await store.get<UserProfile>(COLLECTIONS.users, userId);
-  if (!u) throw notFound("User not found");
   if (actorId === userId && (!input.roles.includes("admin") || input.disabled)) {
     throw badRequest("You can't remove your own admin access or disable your own account");
   }
-  const updated = await store.update<UserProfile>(COLLECTIONS.users, userId, { roles: input.roles, disabled: input.disabled ?? u.disabled, updatedAt: nowISO() });
-  await audit(actorId, "admin.user_updated", "user", userId, { roles: input.roles, disabled: input.disabled ?? u.disabled });
+  // Read-modify-write in one transaction: `disabled` defaults to the CURRENT value, not a stale copy.
+  // (The roles list is the admin's explicit choice and replaces the stored one.)
+  const updated = await getStore().transact<UserProfile>(COLLECTIONS.users, userId, (cur) => ({
+    roles: input.roles,
+    disabled: input.disabled ?? cur.disabled,
+    updatedAt: nowISO(),
+  }));
+  if (!updated) throw notFound("User not found");
+  await audit(actorId, "admin.user_updated", "user", userId, { roles: input.roles, disabled: updated.disabled });
   return publicUser(updated);
 }
 

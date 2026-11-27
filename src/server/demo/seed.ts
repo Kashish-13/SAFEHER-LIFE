@@ -20,6 +20,10 @@ const DEMO_POINT = { lat: 28.6315, lng: 77.2167, accuracy: 25, source: "simulate
 export async function seedDemoData(store: DataStore) {
   if (await store.get(COLLECTIONS.users, "demo_priya")) return;
   const t = ago(60 * 24 * 14);
+  // Distinct, millisecond-apart timestamps that reproduce the order demo users have always seen
+  // (Phase 1 E5; guarded by tests/server/demo-order.test.ts): contacts and circles in the order
+  // listed (oldest first), users so the admin list (newest first) keeps the order listed.
+  const tPlus = (ms: number) => new Date(new Date(t).getTime() + ms).toISOString();
 
   const users: UserProfile[] = ([
     {
@@ -34,7 +38,7 @@ export async function seedDemoData(store: DataStore) {
     { ...newUserProfile({ id: "demo_admin", fullName: "SafeHer Admin", email: "admin.demo@safeher.app", now: t }), roles: ["user", "admin"], onboardingComplete: true },
     // Fictional account that used a FORWARDED invitation link. Shows the owner-approval safeguard.
     { ...newUserProfile({ id: "demo_unknown", fullName: "R. Kumar", email: "rk.forwarded.demo@example.com", now: t }), onboardingComplete: true },
-  ] as UserProfile[]).map((u) => ({ ...u, emailVerified: true }));
+  ] as UserProfile[]).map((u, i) => ({ ...u, emailVerified: true, createdAt: tPlus(-i) }));
 
   const byId = new Map(users.map((u) => [u.id, u]));
   const claimFor = (uid: string, email: string | null, at: string): TrustedContact["claim"] => {
@@ -61,12 +65,12 @@ export async function seedDemoData(store: DataStore) {
     contact("tc_demo_kavya", "Kavya Reddy", "Roommate", "secondary", null, "pending"),
     // Invitation sent to Rohan, but claimed by a DIFFERENT account. Awaiting Priya's decision.
     contact("tc_demo_rohan", "Rohan Sharma", "Brother", "secondary", "demo_unknown", "awaiting_approval", "rohan.demo@safeher.app"),
-  ];
+  ].map((c, i) => ({ ...c, createdAt: tPlus(i) }));
 
   const circles: EmergencyCircle[] = [
     { id: "cir_demo_family", ownerId: "demo_priya", name: "Family", description: "Parents — always alerted first", contactIds: ["tc_demo_anita", "tc_demo_rajesh"], createdAt: t, updatedAt: t },
     { id: "cir_demo_friends", ownerId: "demo_priya", name: "Friends", description: "Close friends nearby", contactIds: ["tc_demo_meera", "tc_demo_kavya"], createdAt: t, updatedAt: t },
-  ];
+  ].map((c, i) => ({ ...c, createdAt: tPlus(i) }));
 
   const pastEvent: EmergencyEvent = {
     id: "sos_demo_past", userId: "demo_priya", userName: "Priya Sharma", trigger: "manual", status: "resolved",

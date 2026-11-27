@@ -26,27 +26,31 @@ export async function listMySessions(ownerId: string) {
 
 export async function startSharing(owner: UserProfile, input: { contactId: string; mode: "always" | "temporary"; durationMinutes?: number | null }) {
   const store = getStore();
-  const contact = await store.get<TrustedContact>(COLLECTIONS.trustedContacts, input.contactId);
-  if (!contact || contact.ownerId !== owner.id) throw notFound("Contact not found");
-  if (contact.status !== "accepted" || !contact.contactUserId) throw badRequest("You can only share with contacts who have accepted your invitation");
-
-  const existing = (await store.query<LocationSession>(COLLECTIONS.locationSessions, { where: [where("ownerId", "==", owner.id), where("contactId", "==", contact.id)] }))
-    .find((s) => s.status !== "stopped");
-  const now = nowISO();
-  const expiresAt = input.mode === "temporary" ? new Date(Date.now() + (input.durationMinutes ?? 60) * 60_000).toISOString() : null;
-
-  let session: LocationSession;
-  if (existing) {
-    session = await store.update<LocationSession>(COLLECTIONS.locationSessions, existing.id, { mode: input.mode, status: "active", expiresAt, updatedAt: now });
-  } else {
-    session = {
+  // The contact is re-checked INSIDE the transaction that writes the session. If the owner blocks
+  // or removes the contact concurrently, either this sees the new status and refuses, or it commits
+  // first and the block's clean-up (which runs after the block commits) stops this session.
+  const { session, recipientUserId } = await store.runTransaction(async (tx) => {
+    const contact = await tx.get<TrustedContact>(COLLECTIONS.trustedContacts, input.contactId);
+    if (!contact || contact.ownerId !== owner.id) throw notFound("Contact not found");
+    if (contact.status !== "accepted" || !contact.contactUserId) throw badRequest("You can only share with contacts who have accepted your invitation");
+    const existing = (await tx.query<LocationSession>(COLLECTIONS.locationSessions, { where: [where("ownerId", "==", owner.id), where("contactId", "==", contact.id)] }))
+      .find((s) => s.status !== "stopped");
+    const now = nowISO();
+    const expiresAt = input.mode === "temporary" ? new Date(Date.now() + (input.durationMinutes ?? 60) * 60_000).toISOString() : null;
+    if (existing) {
+      const patch: Partial<LocationSession> = { mode: input.mode, status: "active", expiresAt, updatedAt: now };
+      tx.update<LocationSession>(COLLECTIONS.locationSessions, existing.id, patch);
+      return { session: { ...existing, ...patch } as LocationSession, recipientUserId: contact.contactUserId };
+    }
+    const session: LocationSession = {
       id: newId("loc"), ownerId: owner.id, contactId: contact.id, contactUserId: contact.contactUserId, contactName: contact.name,
       mode: input.mode, status: "active", expiresAt, lastLocation: null, lastUpdatedAt: null, createdAt: now, updatedAt: now,
     };
-    await store.create(COLLECTIONS.locationSessions, session);
-  }
+    tx.create(COLLECTIONS.locationSessions, session);
+    return { session, recipientUserId: contact.contactUserId };
+  });
   await createNotification({
-    recipientUserId: contact.contactUserId,
+    recipientUserId,
     type: "location_share",
     title: `${owner.fullName} is sharing their location with you`,
     body: input.mode === "always" ? "Ongoing sharing until they turn it off." : `Temporary sharing for ${input.durationMinutes} minutes.`,

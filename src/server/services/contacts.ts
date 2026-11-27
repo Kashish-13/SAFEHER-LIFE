@@ -1,4 +1,4 @@
-import type { InvitationClaim, TrustedContact, UserProfile } from "@/core/types";
+import type { EmergencyCircle, InvitationClaim, LocationSession, TrustedContact, UserProfile } from "@/core/types";
 import type { ContactCreateInput } from "@/core/validation";
 import { audit } from "../audit";
 import { badRequest, conflict, forbidden, notFound } from "../errors";
@@ -31,14 +31,8 @@ export const publicContact = (c: TrustedContact) => ({ ...c, inviteTokenHash: nu
 
 export async function listContacts(ownerId: string): Promise<TrustedContact[]> {
   const contacts = await getStore().query<TrustedContact>(COLLECTIONS.trustedContacts, { where: [where("ownerId", "==", ownerId)] });
-  return contacts.filter((c) => c.status !== "removed").sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-}
-
-async function getOwnedContact(ownerId: string, id: string): Promise<TrustedContact> {
-  const c = await getStore().get<TrustedContact>(COLLECTIONS.trustedContacts, id);
-  if (!c || c.status === "removed") throw notFound("Contact not found");
-  if (c.ownerId !== ownerId) throw forbidden();
-  return c;
+  // Oldest first; the id breaks ties so both stores give the same order (the store doesn't promise tie order).
+  return contacts.filter((c) => c.status !== "removed").sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
 }
 
 export async function createContact(owner: UserProfile, input: ContactCreateInput, appUrl: string): Promise<ContactWithInvite> {
@@ -100,46 +94,52 @@ export async function updateContact(
   patch: { name?: string; relationship?: string; priority?: "primary" | "secondary"; notifyOnEmergency?: boolean; action?: ContactAction },
   appUrl: string,
 ): Promise<ContactWithInvite> {
-  const store = getStore();
-  const c = await getOwnedContact(ownerId, id);
   const { action, ...fields } = patch;
   if (action === "approve_claim" || action === "reject_claim") {
-    return { contact: publicContact(await decideClaim(ownerId, c, action === "approve_claim" ? "approve" : "reject")), inviteLink: null };
+    return { contact: publicContact(await decideClaim(ownerId, id, action === "approve_claim" ? "approve" : "reject")), inviteLink: null };
   }
+  // Generated outside the transaction (it may be re-run); used only by resend_invite.
+  const invite = action === "resend_invite" ? newInvite() : null;
 
-  const next: Partial<TrustedContact> = { ...fields, updatedAt: nowISO() };
-  let inviteLink: string | null = null;
-
-  switch (action) {
-    case "block":
-      next.status = "blocked";
-      next.inviteTokenHash = null;
-      await revokeAllAccess(c);
-      break;
-    case "unblock":
-      if (c.status !== "blocked") throw badRequest("Contact is not blocked");
-      // Restores eligibility for FUTURE alerts only. Access to past emergencies stays revoked.
-      next.status = c.contactUserId ? "accepted" : "pending";
-      break;
-    case "remove":
-      next.status = "removed";
-      next.inviteTokenHash = null;
-      await revokeAllAccess(c);
-      await removeFromCircles(ownerId, c.id);
-      break;
-    case "resend_invite": {
-      if (!["pending", "rejected", "claim_rejected"].includes(c.status)) throw badRequest("Only pending or declined invitations can be resent");
-      const invite = newInvite();
-      next.status = "pending";
-      next.claim = null;
-      next.inviteTokenHash = invite.hash;
-      next.inviteExpiresAt = invite.expiresAt;
-      inviteLink = `${appUrl}/invite/${invite.token}`;
-      break;
+  // Every state check runs on the CURRENT document inside the transaction, so e.g. a resend can't
+  // overwrite an approval that just happened, and an unblock can't act on a stale "blocked" copy.
+  const { before, updated } = await getStore().runTransaction(async (tx) => {
+    const c = await tx.get<TrustedContact>(COLLECTIONS.trustedContacts, id);
+    if (!c || c.status === "removed") throw notFound("Contact not found");
+    if (c.ownerId !== ownerId) throw forbidden();
+    const next: Partial<TrustedContact> = { ...fields, updatedAt: nowISO() };
+    switch (action) {
+      case "block":
+        next.status = "blocked";
+        next.inviteTokenHash = null;
+        break;
+      case "unblock":
+        if (c.status !== "blocked") throw badRequest("Contact is not blocked");
+        // Restores eligibility for FUTURE alerts only. Access to past emergencies stays revoked.
+        next.status = c.contactUserId ? "accepted" : "pending";
+        break;
+      case "remove":
+        next.status = "removed";
+        next.inviteTokenHash = null;
+        break;
+      case "resend_invite":
+        if (!["pending", "rejected", "claim_rejected"].includes(c.status)) throw badRequest("Only pending or declined invitations can be resent");
+        next.status = "pending";
+        next.claim = null;
+        next.inviteTokenHash = invite!.hash;
+        next.inviteExpiresAt = invite!.expiresAt;
+        break;
     }
-  }
-  const updated = await store.update<TrustedContact>(COLLECTIONS.trustedContacts, id, next);
+    tx.update<TrustedContact>(COLLECTIONS.trustedContacts, id, next);
+    return { before: c, updated: { ...c, ...next } as TrustedContact };
+  });
+
+  // After commit. The new status already denies access (Phase 0 link check), so these
+  // clean-ups only remove stored traces; each is safe to repeat.
+  if (action === "block" || action === "remove") await revokeAllAccess(before);
+  if (action === "remove") await removeFromCircles(ownerId, id);
   if (action) await audit(ownerId, `contact.${action}`, "trustedContact", id);
+  const inviteLink = invite ? `${appUrl}/invite/${invite.token}` : null;
   return { contact: publicContact(updated), inviteLink };
 }
 
@@ -149,17 +149,29 @@ async function revokeAllAccess(c: TrustedContact) {
   if (c.contactUserId) await revokeViewerAccess(c.ownerId, c.contactUserId);
 }
 
+/** Idempotent; each session is re-read in its own transaction so a concurrent change isn't overwritten. */
 async function stopSharesForContact(contactId: string) {
   const store = getStore();
-  const sessions = await store.query<{ id: string; status: string }>(COLLECTIONS.locationSessions, { where: [where("contactId", "==", contactId)] });
-  await Promise.all(sessions.filter((s) => s.status !== "stopped").map((s) => store.update(COLLECTIONS.locationSessions, s.id, { status: "stopped", lastLocation: null, updatedAt: nowISO() })));
+  const sessions = await store.query<LocationSession>(COLLECTIONS.locationSessions, { where: [where("contactId", "==", contactId)] });
+  await Promise.all(
+    sessions.filter((s) => s.status !== "stopped").map((s) =>
+      store.transact<LocationSession>(COLLECTIONS.locationSessions, s.id, (cur) =>
+        cur.status === "stopped" ? null : { status: "stopped", lastLocation: null, updatedAt: nowISO() },
+      ),
+    ),
+  );
 }
 
+/** Idempotent; each circle's member list is re-read so a concurrent circle edit isn't overwritten. */
 async function removeFromCircles(ownerId: string, contactId: string) {
   const store = getStore();
-  const circles = await store.query<{ id: string; contactIds: string[] }>(COLLECTIONS.emergencyCircles, { where: [where("ownerId", "==", ownerId)] });
+  const circles = await store.query<EmergencyCircle>(COLLECTIONS.emergencyCircles, { where: [where("ownerId", "==", ownerId)] });
   await Promise.all(
-    circles.filter((c) => c.contactIds.includes(contactId)).map((c) => store.update(COLLECTIONS.emergencyCircles, c.id, { contactIds: c.contactIds.filter((x) => x !== contactId) })),
+    circles.filter((c) => c.contactIds.includes(contactId)).map((c) =>
+      store.transact<EmergencyCircle>(COLLECTIONS.emergencyCircles, c.id, (cur) =>
+        cur.contactIds.includes(contactId) ? { contactIds: cur.contactIds.filter((x) => x !== contactId) } : null,
+      ),
+    ),
   );
 }
 
@@ -184,48 +196,68 @@ export async function lookupInvitation(token: string) {
  * - Grants NO access. The owner must approve the claimant's identity (decideClaim).
  */
 export async function respondToInvitation(user: UserProfile, identity: { emailVerified: boolean; email: string | null }, token: string, decision: "accept" | "reject") {
-  const store = getStore();
-  const c = await findByToken(token);
-  if (c.ownerId === user.id) throw badRequest("You can't accept your own invitation");
-  if (c.status !== "pending") throw conflict("This invitation is no longer pending");
-  const owner = await store.get<UserProfile>(COLLECTIONS.users, c.ownerId);
-  const ownerName = owner?.fullName ?? "the sender";
+  const tokenHash = sha256(token);
+  // ONE transaction finds the invitation by its token, re-checks it, and consumes it. Two people
+  // using the same link at once are serialised: the loser is re-run, finds the token gone, and
+  // gets the same 404 as any already-used link. Errors thrown here propagate unchanged.
+  const result = await getStore().runTransaction(async (tx) => {
+    // ── reads ──
+    const [c] = await tx.query<TrustedContact>(COLLECTIONS.trustedContacts, { where: [where("inviteTokenHash", "==", tokenHash)], limit: 1 });
+    if (!c) throw notFound("This invitation link is invalid or has already been used");
+    if (c.inviteExpiresAt && new Date(c.inviteExpiresAt) < new Date()) throw badRequest("This invitation has expired. Ask the sender to resend it.");
+    if (c.ownerId === user.id) throw badRequest("You can't accept your own invitation");
+    if (c.status !== "pending") throw conflict("This invitation is no longer pending");
+    const owner = await tx.get<UserProfile>(COLLECTIONS.users, c.ownerId);
+    const ownerName = owner?.fullName ?? "the sender";
 
-  if (decision === "reject") {
-    const updated = await store.update<TrustedContact>(COLLECTIONS.trustedContacts, c.id, { status: "rejected", inviteTokenHash: null, updatedAt: nowISO() });
+    if (decision === "reject") {
+      const patch: Partial<TrustedContact> = { status: "rejected", inviteTokenHash: null, updatedAt: nowISO() };
+      tx.update<TrustedContact>(COLLECTIONS.trustedContacts, c.id, patch);
+      return { kind: "rejected" as const, contact: { ...c, ...patch } as TrustedContact };
+    }
+
+    if (!identity.emailVerified && !user.phoneVerified) {
+      throw forbidden(`Verify your email address or phone number first, so ${ownerName} can confirm it's really you.`);
+    }
+    const mine = await tx.query<TrustedContact>(COLLECTIONS.trustedContacts, { where: [where("ownerId", "==", c.ownerId), where("claim.userId", "==", user.id)] });
+    if (mine.some((m) => m.status === "accepted" || m.status === "awaiting_approval")) {
+      throw conflict(`You're already in ${ownerName}'s circle or waiting for their approval`);
+    }
+
+    // ── write ──
+    const verifiedEmail = identity.emailVerified ? (identity.email ?? user.email).toLowerCase() : null;
+    const claim: InvitationClaim = {
+      userId: user.id,
+      displayName: user.fullName,
+      email: identity.email ?? user.email ?? null,
+      emailVerified: identity.emailVerified,
+      phone: user.phone,
+      phoneVerified: user.phoneVerified,
+      matchesInvite: {
+        email: c.email ? verifiedEmail === c.email.toLowerCase() : null,
+        phone: c.phone ? Boolean(user.phoneVerified && user.phone === c.phone) : null,
+      },
+      claimedAt: nowISO(),
+    };
+    const patch: Partial<TrustedContact> = {
+      status: "awaiting_approval",
+      claim,
+      inviteTokenHash: null, // single use, consumed by this claim
+      updatedAt: nowISO(),
+    };
+    tx.update<TrustedContact>(COLLECTIONS.trustedContacts, c.id, patch);
+    return { kind: "claimed" as const, contact: { ...c, ...patch } as TrustedContact, claim };
+  });
+
+  // Side effects only after the commit.
+  const c = result.contact;
+  if (result.kind === "rejected") {
     await createNotification({ recipientUserId: c.ownerId, type: "invitation_response", title: `${c.name} declined your invitation`, body: "You can resend the invitation or add someone else.", link: "/circle" });
     await audit(user.id, "invitation.reject", "trustedContact", c.id);
-    return publicContact(updated);
+    return publicContact(c);
   }
-
-  if (!identity.emailVerified && !user.phoneVerified) {
-    throw forbidden(`Verify your email address or phone number first, so ${ownerName} can confirm it's really you.`);
-  }
-  const mine = await store.query<TrustedContact>(COLLECTIONS.trustedContacts, { where: [where("ownerId", "==", c.ownerId), where("claim.userId", "==", user.id)] });
-  if (mine.some((m) => m.status === "accepted" || m.status === "awaiting_approval")) {
-    throw conflict(`You're already in ${ownerName}'s circle or waiting for their approval`);
-  }
-
-  const verifiedEmail = identity.emailVerified ? (identity.email ?? user.email).toLowerCase() : null;
-  const claim: InvitationClaim = {
-    userId: user.id,
-    displayName: user.fullName,
-    email: identity.email ?? user.email ?? null,
-    emailVerified: identity.emailVerified,
-    phone: user.phone,
-    phoneVerified: user.phoneVerified,
-    matchesInvite: {
-      email: c.email ? verifiedEmail === c.email.toLowerCase() : null,
-      phone: c.phone ? Boolean(user.phoneVerified && user.phone === c.phone) : null,
-    },
-    claimedAt: nowISO(),
-  };
-  const updated = await store.update<TrustedContact>(COLLECTIONS.trustedContacts, c.id, {
-    status: "awaiting_approval",
-    claim,
-    inviteTokenHash: null, // single use, consumed by this claim
-    updatedAt: nowISO(),
-  });
+  const { claim } = result;
+  const updated = c;
   const mismatch = claim.matchesInvite.email === false || claim.matchesInvite.phone === false;
   await createNotification({
     recipientUserId: c.ownerId,
@@ -241,29 +273,48 @@ export async function respondToInvitation(user: UserProfile, identity: { emailVe
 }
 
 /** Step 2: the OWNER approves or rejects the identity that claimed the invitation. */
-async function decideClaim(ownerId: string, c: TrustedContact, decision: "approve" | "reject") {
+/**
+ * ONE transaction re-reads the contact and the claimant. The request must STILL be awaiting
+ * approval: if the owner blocked/removed it, or the claimant left, in the meantime, approval
+ * fails (409) and can never bring the relationship back. The role is added to the role list as
+ * read inside the transaction, so a concurrent role change isn't lost.
+ */
+async function decideClaim(ownerId: string, contactId: string, decision: "approve" | "reject") {
   const store = getStore();
-  if (c.status !== "awaiting_approval" || !c.claim) throw conflict("There is no request waiting for your approval");
-  const claimant = await store.get<UserProfile>(COLLECTIONS.users, c.claim.userId);
+  const result = await store.runTransaction(async (tx) => {
+    const c = await tx.get<TrustedContact>(COLLECTIONS.trustedContacts, contactId);
+    if (!c || c.status === "removed") throw notFound("Contact not found");
+    if (c.ownerId !== ownerId) throw forbidden();
+    if (c.status !== "awaiting_approval" || !c.claim) throw conflict("There is no request waiting for your approval");
+    const claimant = await tx.get<UserProfile>(COLLECTIONS.users, c.claim.userId);
+
+    if (decision === "approve") {
+      if (!claimant || claimant.disabled || claimant.deletionPendingAt) throw conflict("This account is no longer available");
+      const patch: Partial<TrustedContact> = { status: "accepted", contactUserId: claimant.id, updatedAt: nowISO() };
+      tx.update<TrustedContact>(COLLECTIONS.trustedContacts, c.id, patch);
+      if (!claimant.roles.includes("trusted_contact")) {
+        tx.update<UserProfile>(COLLECTIONS.users, claimant.id, { roles: [...claimant.roles, "trusted_contact"] });
+      }
+      return { contact: { ...c, ...patch } as TrustedContact, claimantId: claimant.id };
+    }
+    const patch: Partial<TrustedContact> = { status: "claim_rejected", contactUserId: null, updatedAt: nowISO() };
+    tx.update<TrustedContact>(COLLECTIONS.trustedContacts, c.id, patch);
+    return { contact: { ...c, ...patch } as TrustedContact, claimantId: claimant?.id ?? null };
+  });
+
+  // Side effects only after the commit.
   const owner = await store.get<UserProfile>(COLLECTIONS.users, ownerId);
   const ownerName = owner?.fullName ?? "The sender";
-
   if (decision === "approve") {
-    if (!claimant || claimant.disabled) throw conflict("This account is no longer available");
-    const updated = await store.update<TrustedContact>(COLLECTIONS.trustedContacts, c.id, { status: "accepted", contactUserId: claimant.id, updatedAt: nowISO() });
-    if (!claimant.roles.includes("trusted_contact")) {
-      await store.update<UserProfile>(COLLECTIONS.users, claimant.id, { roles: [...claimant.roles, "trusted_contact"] });
-    }
-    await createNotification({ recipientUserId: claimant.id, type: "invitation_response", title: `${ownerName} approved you as a trusted contact`, body: "You'll now receive their emergency alerts.", link: "/circle" });
-    await audit(ownerId, "invitation.claim_approved", "trustedContact", c.id);
-    return updated;
+    await createNotification({ recipientUserId: result.claimantId!, type: "invitation_response", title: `${ownerName} approved you as a trusted contact`, body: "You'll now receive their emergency alerts.", link: "/circle" });
+    await audit(ownerId, "invitation.claim_approved", "trustedContact", contactId);
+    return result.contact;
   }
-  const updated = await store.update<TrustedContact>(COLLECTIONS.trustedContacts, c.id, { status: "claim_rejected", contactUserId: null, updatedAt: nowISO() });
-  if (claimant) {
-    await createNotification({ recipientUserId: claimant.id, type: "invitation_response", title: "Your request wasn't approved", body: `${ownerName} didn't approve adding your account to their emergency circle.`, link: null });
+  if (result.claimantId) {
+    await createNotification({ recipientUserId: result.claimantId, type: "invitation_response", title: "Your request wasn't approved", body: `${ownerName} didn't approve adding your account to their emergency circle.`, link: null });
   }
-  await audit(ownerId, "invitation.claim_rejected", "trustedContact", c.id);
-  return updated;
+  await audit(ownerId, "invitation.claim_rejected", "trustedContact", contactId);
+  return result.contact;
 }
 
 /** Circles the caller belongs to, or is waiting to be approved for. */
@@ -281,11 +332,14 @@ export async function listIncoming(uid: string) {
 
 /** A trusted contact (or pending claimant) can step down at any time. Access ends immediately. */
 export async function leaveCircle(uid: string, linkId: string) {
-  const store = getStore();
-  const l = await store.get<TrustedContact>(COLLECTIONS.trustedContacts, linkId);
-  if (!l || l.claim?.userId !== uid || !["accepted", "awaiting_approval"].includes(l.status)) throw notFound();
+  // Status first, in a transaction (so a concurrent approval can't re-accept it), then clean-up.
+  const l = await getStore().runTransaction(async (tx) => {
+    const cur = await tx.get<TrustedContact>(COLLECTIONS.trustedContacts, linkId);
+    if (!cur || cur.claim?.userId !== uid || !["accepted", "awaiting_approval"].includes(cur.status)) throw notFound();
+    tx.update<TrustedContact>(COLLECTIONS.trustedContacts, linkId, { status: "removed", contactUserId: null, updatedAt: nowISO() });
+    return cur;
+  });
   await revokeAllAccess(l);
-  await store.update<TrustedContact>(COLLECTIONS.trustedContacts, linkId, { status: "removed", contactUserId: null, updatedAt: nowISO() });
   await createNotification({ recipientUserId: l.ownerId, type: "invitation_response", title: `${l.name} left your emergency circle`, body: "Consider adding another trusted contact.", link: "/circle" });
   await audit(uid, "contact.left", "trustedContact", linkId);
 }

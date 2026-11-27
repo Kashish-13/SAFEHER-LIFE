@@ -10,11 +10,13 @@ import type { EmergencyResponse, ResponseStatus, StatusChange } from "./types";
  *     │          │          │
  *     └──────────┴──────────┴──► failed  (only before the recipient acts)
  *
- * A recipient may acknowledge directly from "sent" because opening the alert
- * is itself proof of delivery.
+ * A recipient may act directly from "sent" OR "queued", because opening or answering the
+ * alert is itself proof of delivery. "queued" matters: the in-app alert is written before
+ * the dispatcher records "sent", so a fast recipient can respond while it is still queued.
+ * The dispatcher only ever moves a response FORWARD, so it can never overwrite their answer.
  */
 const TRANSITIONS: Record<ResponseStatus, ResponseStatus[]> = {
-  queued: ["sent", "failed"],
+  queued: ["sent", "delivered", "acknowledged", "declined", "failed"],
   sent: ["delivered", "acknowledged", "declined", "failed"],
   delivered: ["acknowledged", "declined"],
   acknowledged: [],

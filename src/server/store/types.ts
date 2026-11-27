@@ -8,6 +8,8 @@ export const COLLECTIONS = {
   trustedContacts: "trustedContacts",
   emergencyCircles: "emergencyCircles",
   emergencyEvents: "emergencyEvents",
+  /** Per-user SOS lock (server-only). See ActiveEmergencyLock in core/types. */
+  activeEmergencies: "activeEmergencies",
   emergencyResponses: "emergencyResponses",
   locationSessions: "locationSessions",
   journeySessions: "journeySessions",

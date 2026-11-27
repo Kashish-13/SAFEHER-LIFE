@@ -7,7 +7,8 @@ import { COLLECTIONS, where } from "../store/types";
 
 export async function listCircles(ownerId: string): Promise<EmergencyCircle[]> {
   const circles = await getStore().query<EmergencyCircle>(COLLECTIONS.emergencyCircles, { where: [where("ownerId", "==", ownerId)] });
-  return circles.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  // Oldest first; the id breaks ties so both stores give the same order.
+  return circles.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
 }
 
 /** Ensures every contact id belongs to the owner (prevents cross-user references). */
