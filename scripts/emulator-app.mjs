@@ -1,17 +1,20 @@
 #!/usr/bin/env node
 // Runs SafeHer against the LOCAL Firebase Emulator Suite only.
 //
-//   node scripts/emulator-app.mjs check   validate the emulator setup, start nothing
-//   node scripts/emulator-app.mjs dev     next dev   on http://localhost:3200
+//   node scripts/emulator-app.mjs check   validate the setup and report whether the emulators run; start nothing
+//   node scripts/emulator-app.mjs dev     next dev   on http://127.0.0.1:3200 (loopback only)
 //   node scripts/emulator-app.mjs build   next build into .next-emu
-//   node scripts/emulator-app.mjs start   next start on http://localhost:3200
+//   node scripts/emulator-app.mjs start   next start on http://127.0.0.1:3200 (loopback only)
 //
 // Safety: refuses to run unless every Firebase setting points at the emulator
 // (project id "demo-*", loopback hosts) and no real credential is reachable.
+// `dev` and `start` also refuse unless the Auth and Firestore emulators are already
+// running (`npm run emulators` in a separate terminal).
 // Uses its own port (3200) and build folder (.next-emu), so the demo dev server
 // (3000) and the browser-test servers (3100, 3110) are never touched.
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { connect } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -135,7 +138,38 @@ if (problems.length) {
 }
 console.log(`[emulator] Configuration OK: project ${PROJECT_ID}, Firestore ${fileEnv.FIRESTORE_EMULATOR_HOST}, Auth ${fileEnv.FIREBASE_AUTH_EMULATOR_HOST}, app ${fileEnv.NEXT_PUBLIC_APP_URL}.`);
 
-if (command === "check") process.exit(0);
+/** True if something accepts TCP connections at a loopback host:port (already validated above). */
+function reachable(hostPort, timeoutMs = 1500) {
+  const i = hostPort.lastIndexOf(":");
+  const host = hostPort.slice(0, i).replace(/^\[|\]$/g, "");
+  const port = Number(hostPort.slice(i + 1));
+  return new Promise((resolve) => {
+    const socket = connect({ host, port });
+    const done = (ok) => { socket.destroy(); resolve(ok); };
+    socket.setTimeout(timeoutMs, () => done(false));
+    socket.once("connect", () => done(true));
+    socket.once("error", () => done(false));
+  });
+}
+
+// A valid configuration does NOT mean the emulators are running: they exist only while
+// `npm run emulators` keeps running in its own terminal. Check, so a missing emulator shows
+// up here instead of as a "Network Error" in the browser.
+const services = [["Auth", fileEnv.FIREBASE_AUTH_EMULATOR_HOST], ["Firestore", fileEnv.FIRESTORE_EMULATOR_HOST]];
+const status = await Promise.all(services.map(async ([name, hp]) => [name, hp, await reachable(hp)]));
+for (const [name, hp, ok] of status) console.log(`[emulator] ${name} emulator at ${hp}: ${ok ? "running" : "NOT RUNNING"}`);
+const missing = status.filter(([, , ok]) => !ok);
+const howTo = "Start them in a SEPARATE terminal and leave it open:  npm run emulators\n" +
+  "  (wait for \"All emulators ready!\"; closing that terminal or pressing Ctrl+C stops them)";
+
+if (command === "check") {
+  if (missing.length) console.log(`[emulator] Emulators are not running. ${howTo}`);
+  process.exit(0); // `check` validates configuration; emulator status is informational.
+}
+if (missing.length && command !== "build") {
+  console.error(`[emulator] Refusing to start the app: ${missing.map(([n]) => n).join(" and ")} emulator not running.\n  ${howTo}`);
+  process.exit(1);
+}
 if (!APP_SUPPORTS_EMULATOR) {
   console.error("[emulator] The app does not support emulator mode yet (Phase 1 step E3). Only `check` is available.");
   process.exit(1);

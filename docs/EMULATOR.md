@@ -36,17 +36,26 @@ Phase 1 develops and tests the Firebase version of SafeHer **only** against the 
 
 ```powershell
 npm run emulators         # start Auth + Firestore + UI; Ctrl+C to stop (data is discarded)
-npm run emulators:check   # validate .env.emulator and your environment; starts nothing
+npm run emulators:check   # validate settings AND report whether Auth/Firestore emulators are running; starts nothing
 npm run test:rules        # rules tests inside a temporary Firestore emulator
 npm run test:emulator     # store/service/auth tests inside temporary Auth + Firestore emulators
-npm run dev:emulator      # app on :3200 against the emulators   (available from Phase 1 step E3)
-npm run build:emulator    # production build into .next-emu       (available from E3)
-npm run start:emulator    # serve that build on :3200             (available from E3)
+npm run dev:emulator      # app on 127.0.0.1:3200 against the emulators (needs them running)
+npm run build:emulator    # production build into .next-emu
+npm run start:emulator    # serve that build on 127.0.0.1:3200 (needs the emulators running)
 ```
 
-Run `npm run emulators` in one terminal and `npm run dev:emulator` in another. Until step E3 teaches the app emulator
-mode, the `dev`/`build`/`start` launchers deliberately refuse to start, because the app would otherwise treat the
-placeholders as an incomplete Firebase setup.
+### Running it: two terminals, in this order
+
+1. **Terminal 1:** `npm run emulators`. Wait for `All emulators ready!`. **Leave this terminal open and don't type
+   in it.** The emulators exist only while this command runs; Ctrl+C or closing the terminal stops them, and every
+   account and document in them is discarded.
+2. **Terminal 2:** `npm run build:emulator` once (again after code changes), then `npm run start:emulator`
+   (or `npm run dev:emulator`). Open <http://127.0.0.1:3200>.
+3. Use a **third** terminal for checks such as `netstat -ano | findstr ":9099 :8080 :4000"`.
+
+`dev:emulator` and `start:emulator` refuse to start if the Auth or Firestore emulator isn't reachable. If you stop the
+emulators while the app is running, the app keeps reporting `mode: emulator` (that's its configuration), but sign-up
+and sign-in fail with a network error until you start them again.
 
 **Keeping data between runs** (optional): `firebase emulators:start --project demo-safeher-life --only auth,firestore
 --export-on-exit=.emulator-data`, and later add `--import=.emulator-data`. `.emulator-data/` is git-ignored. It holds
@@ -63,6 +72,10 @@ fictional test data only; never put real people's data in the emulator.
 * Debug logs (`firebase-debug.log`, `firestore-debug.log`, `ui-debug.log`) and `.emulator-data/` are git-ignored.
 
 ## Troubleshooting
+
+* **Sign-up shows "Network Error", ports 9099/8080 show nothing in `netstat`**: the emulators aren't running. A
+  "Configuration OK" line or `/api/health` saying `mode: emulator` does not mean they are. Run `npm run emulators` in
+  its own terminal and keep it open (see "Running it" above).
 
 * **"Could not spawn `java -version`"**: open a new terminal (or restart VS Code) after installing Java so `PATH` and
   `JAVA_HOME` are picked up.
