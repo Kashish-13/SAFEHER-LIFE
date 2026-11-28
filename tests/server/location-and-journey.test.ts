@@ -39,7 +39,8 @@ describe("family location sharing permissions", () => {
 
   it("other users cannot control someone else's share", async () => {
     const res = await updateShare(req("PATCH", "", { as: "demo_anita", body: { action: "resume" } }), params({ id: "loc_demo_rajesh" }));
-    expect(res.status).toBe(403);
+    // E6 / audit L1: someone else's share is answered exactly like a missing one (was 403).
+    expect(res.status).toBe(404);
   });
 
   it("temporary shares expire", async () => {

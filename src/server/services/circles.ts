@@ -1,6 +1,6 @@
 import type { EmergencyCircle, TrustedContact } from "@/core/types";
 import { audit } from "../audit";
-import { badRequest, forbidden, notFound } from "../errors";
+import { badRequest, notFound } from "../errors";
 import { newId, nowISO } from "../ids";
 import { getStore } from "../store";
 import { COLLECTIONS, where } from "../store/types";
@@ -32,8 +32,8 @@ export async function createCircle(ownerId: string, input: { name: string; descr
 
 async function getOwned(ownerId: string, id: string) {
   const c = await getStore().get<EmergencyCircle>(COLLECTIONS.emergencyCircles, id);
-  if (!c) throw notFound("Circle not found");
-  if (c.ownerId !== ownerId) throw forbidden();
+  // Someone else's circle answers exactly like a missing one (no existence disclosure).
+  if (!c || c.ownerId !== ownerId) throw notFound("Circle not found");
   return c;
 }
 

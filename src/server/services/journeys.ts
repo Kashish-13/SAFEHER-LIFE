@@ -2,7 +2,7 @@ import { evaluateJourney } from "@/core/journey";
 import type { JourneySession, TrustedContact, UserProfile } from "@/core/types";
 import type { JourneyCreateInput } from "@/core/validation";
 import { audit } from "../audit";
-import { badRequest, conflict, forbidden, notFound } from "../errors";
+import { badRequest, conflict, notFound } from "../errors";
 import { newId, nowISO } from "../ids";
 import { getStore } from "../store";
 import { COLLECTIONS, where } from "../store/types";
@@ -10,11 +10,13 @@ import { createEmergency } from "./emergencies";
 import { createNotification } from "./notifications";
 
 export async function listJourneys(uid: string) {
-  return getStore().query<JourneySession>(COLLECTIONS.journeySessions, {
+  const journeys = await getStore().query<JourneySession>(COLLECTIONS.journeySessions, {
     where: [where("userId", "==", uid)],
     orderBy: { field: "startedAt", direction: "desc" },
     limit: 30,
   });
+  // Newest first; the id breaks ties so both stores give the same order.
+  return journeys.sort((a, b) => b.startedAt.localeCompare(a.startedAt) || a.id.localeCompare(b.id));
 }
 
 export async function startJourney(user: UserProfile, input: JourneyCreateInput) {
@@ -57,8 +59,8 @@ export async function startJourney(user: UserProfile, input: JourneyCreateInput)
 
 async function getOwned(uid: string, id: string) {
   const j = await getStore().get<JourneySession>(COLLECTIONS.journeySessions, id);
-  if (!j) throw notFound("Journey not found");
-  if (j.userId !== uid) throw forbidden();
+  // Someone else's journey answers exactly like a missing one (no existence disclosure).
+  if (!j || j.userId !== uid) throw notFound("Journey not found");
   return j;
 }
 

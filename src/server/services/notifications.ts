@@ -1,5 +1,5 @@
 import type { AppNotification, NotificationType } from "@/core/types";
-import { forbidden, notFound } from "../errors";
+import { notFound } from "../errors";
 import { newId, nowISO } from "../ids";
 import { getStore } from "../store";
 import { COLLECTIONS, where } from "../store/types";
@@ -35,18 +35,20 @@ export async function createNotification(input: {
 }
 
 export async function listNotifications(uid: string, limit = 50): Promise<AppNotification[]> {
-  return getStore().query<AppNotification>(COLLECTIONS.notifications, {
+  const items = await getStore().query<AppNotification>(COLLECTIONS.notifications, {
     where: [where("recipientUserId", "==", uid)],
     orderBy: { field: "createdAt", direction: "desc" },
     limit,
   });
+  // Newest first; the id breaks ties so both stores give the same order.
+  return items.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
 }
 
 export async function markNotificationRead(uid: string, id: string): Promise<AppNotification> {
   const store = getStore();
   const n = await store.get<AppNotification>(COLLECTIONS.notifications, id);
-  if (!n) throw notFound("Notification not found");
-  if (n.recipientUserId !== uid) throw forbidden();
+  // Someone else's notification answers exactly like a missing one (no existence disclosure).
+  if (!n || n.recipientUserId !== uid) throw notFound("Notification not found");
   return store.update<AppNotification>(COLLECTIONS.notifications, id, { read: true });
 }
 

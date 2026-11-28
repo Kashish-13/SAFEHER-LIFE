@@ -54,9 +54,11 @@ export async function adminUpdateUser(actorId: string, userId: string, input: { 
 
 export async function adminEmergencyActivity() {
   const events = await getStore().query<EmergencyEvent>(COLLECTIONS.emergencyEvents, { orderBy: { field: "createdAt", direction: "desc" }, limit: 100 });
-  return events.map(redactEmergencyForAdmin);
+  // Newest first; the id breaks ties so both stores give the same order.
+  return events.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id)).map(redactEmergencyForAdmin);
 }
 
 export async function adminAuditLogs() {
-  return getStore().query<AuditLog>(COLLECTIONS.auditLogs, { orderBy: { field: "createdAt", direction: "desc" }, limit: 200 });
+  const logs = await getStore().query<AuditLog>(COLLECTIONS.auditLogs, { orderBy: { field: "createdAt", direction: "desc" }, limit: 200 });
+  return logs.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
 }

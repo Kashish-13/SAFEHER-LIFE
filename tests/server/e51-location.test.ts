@@ -64,7 +64,9 @@ describe("resuming a share (M1)", () => {
     expect(stopped.status).toBe("stopped");
     expect(stopped.lastLocation).toBeNull();
     await expect(updateSharing("demo_priya", "loc_demo_rajesh", "resume")).rejects.toMatchObject({ status: 404 });
-    await expect(updateSharing("demo_anita", "loc_demo_anita", "pause")).rejects.toMatchObject({ status: 403 });
+    // Someone else's session is indistinguishable from a missing one (E6 / audit L1).
+    await expect(updateSharing("demo_anita", "loc_demo_anita", "pause")).rejects.toMatchObject({ status: 404 });
+    expect((await session("loc_demo_anita")).status).toBe("active");
   });
 });
 

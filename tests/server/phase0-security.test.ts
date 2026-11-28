@@ -85,7 +85,8 @@ describe("0.3/0.4 invitation identity and owner approval", () => {
   });
 
   it("only the owner can approve a claim", async () => {
-    expect((await updateContact(req("PATCH", "", { as: "demo_anita", body: { action: "approve_claim" } }), params({ id: "tc_demo_rohan" }))).status).toBe(403);
+    // E6 / audit L1: a non-owner gets the same 404 as for a missing contact (was 403); still denied.
+    expect((await updateContact(req("PATCH", "", { as: "demo_anita", body: { action: "approve_claim" } }), params({ id: "tc_demo_rohan" }))).status).toBe(404);
   });
 
   it("claimants must have a verified email or phone", async () => {

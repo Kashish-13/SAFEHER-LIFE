@@ -105,8 +105,8 @@ export async function updateContact(
   // overwrite an approval that just happened, and an unblock can't act on a stale "blocked" copy.
   const { before, updated } = await getStore().runTransaction(async (tx) => {
     const c = await tx.get<TrustedContact>(COLLECTIONS.trustedContacts, id);
-    if (!c || c.status === "removed") throw notFound("Contact not found");
-    if (c.ownerId !== ownerId) throw forbidden();
+    // Someone else's contact answers exactly like a missing one (no existence disclosure).
+    if (!c || c.status === "removed" || c.ownerId !== ownerId) throw notFound("Contact not found");
     const next: Partial<TrustedContact> = { ...fields, updatedAt: nowISO() };
     switch (action) {
       case "block":
@@ -283,8 +283,8 @@ async function decideClaim(ownerId: string, contactId: string, decision: "approv
   const store = getStore();
   const result = await store.runTransaction(async (tx) => {
     const c = await tx.get<TrustedContact>(COLLECTIONS.trustedContacts, contactId);
-    if (!c || c.status === "removed") throw notFound("Contact not found");
-    if (c.ownerId !== ownerId) throw forbidden();
+    // Someone else's contact answers exactly like a missing one (no existence disclosure).
+    if (!c || c.status === "removed" || c.ownerId !== ownerId) throw notFound("Contact not found");
     if (c.status !== "awaiting_approval" || !c.claim) throw conflict("There is no request waiting for your approval");
     const claimant = await tx.get<UserProfile>(COLLECTIONS.users, c.claim.userId);
 

@@ -232,11 +232,13 @@ export async function listResponses(eventId: string) {
 }
 
 export async function listEmergencyHistory(uid: string) {
-  return getStore().query<EmergencyEvent>(COLLECTIONS.emergencyEvents, {
+  const events = await getStore().query<EmergencyEvent>(COLLECTIONS.emergencyEvents, {
     where: [where("userId", "==", uid)],
     orderBy: { field: "createdAt", direction: "desc" },
     limit: 100,
   });
+  // Newest first; the id breaks ties so both stores give the same order.
+  return events.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
 }
 
 /** Alerts addressed to the caller as a trusted contact, ONLY those they can still access. */

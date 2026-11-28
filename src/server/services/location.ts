@@ -1,7 +1,7 @@
 import { canViewLocation, effectiveStatus, isSessionLive } from "@/core/location-sharing";
 import type { GeoPoint, LocationSession, TrustedContact, UserProfile } from "@/core/types";
 import { audit } from "../audit";
-import { badRequest, forbidden, notFound } from "../errors";
+import { badRequest, notFound } from "../errors";
 import { newId, nowISO } from "../ids";
 import { getStore } from "../store";
 import { COLLECTIONS, where } from "../store/types";
@@ -75,8 +75,8 @@ export async function updateSharing(ownerId: string, id: string, action: "pause"
   const store = getStore();
   const updated = await store.runTransaction(async (tx) => {
     const s = await tx.get<LocationSession>(COLLECTIONS.locationSessions, id);
-    if (!s || s.status === "stopped") throw notFound("Sharing session not found");
-    if (s.ownerId !== ownerId) throw forbidden();
+    // Someone else's session answers exactly like a missing one (no existence disclosure).
+    if (!s || s.status === "stopped" || s.ownerId !== ownerId) throw notFound("Sharing session not found");
     if (action === "resume") {
       const contact = await tx.get<TrustedContact>(COLLECTIONS.trustedContacts, s.contactId);
       if (!linkStillAccepted(s, contact)) throw badRequest("You can only share with contacts who have accepted your invitation");
