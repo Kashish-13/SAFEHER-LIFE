@@ -80,6 +80,12 @@ deletion with cron recovery, and URL-id 404s (`e5-url-ids`).
 * `e51-indexes`: records every query the main service flows run and fails if one needs a composite index that
   `firestore.indexes.json` lacks (the emulator doesn't enforce indexes).
 
+### E6 hardening
+
+* `e6-hardening`: someone else's contact, circle, location share, notification or journey gives exactly the same error
+  as a missing id (audit L1); newest-first lists break equal timestamps by id (audit L5). All 9 tests failed on the
+  pre-E6 services.
+
 `tests/server/demo-order.test.ts` pins the order demo users see today (all seeded records share one `createdAt`, so
 tie order is visible). If it fails, a change altered demo-mode screens; decide that deliberately.
 

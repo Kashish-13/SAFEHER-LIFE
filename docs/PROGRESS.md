@@ -8,8 +8,8 @@ Branches: `phase-1-e5-service-transactions` (E5, `61646ac`, untouched) → `phas
 |---|---|---|
 | E5.1 hardening (location tx + link check, index, SOS dispatch reliability, L2/L3) | Done, committed `df662a5` (by owner) | tsc ✓, vitest 230/230, emulator 50/50, build ✓, Playwright 92/92 |
 | M1 / E6: Firestore security-rules test suite | Done | `npm run test:rules`: 102/102; mutation check: 7 failures as expected |
-| M2: audit leftovers L1 (404 for foreign records), L5 (deterministic list order) | Pending | |
-| M3: docs, release checklist, known limitations | Pending | |
+| M2: audit leftovers L1 (404 for foreign records), L5 (deterministic list order) | Done, `0d364dc` | tsc ✓, vitest 239/239; `e6-hardening` 9/9, all 9 fail on the `df662a5` services |
+| M3: docs, release checklist, known limitations | Done | README status, SECURITY, DEPLOYMENT, ROADMAP, TESTING, new RELEASE-CHECKLIST |
 | Final validation and handover | Pending | |
 
 ## Feature inventory (traced UI → API → service → store, 2026-11-28)
