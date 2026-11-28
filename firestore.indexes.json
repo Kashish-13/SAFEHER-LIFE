@@ -8,6 +8,8 @@
       { "fieldPath": "userId", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "ASCENDING" } ] },
     { "collectionGroup": "emergencyEvents", "queryScope": "COLLECTION", "fields": [
       { "fieldPath": "userId", "order": "ASCENDING" }, { "fieldPath": "authorizedViewerIds", "arrayConfig": "CONTAINS" } ] },
+    { "collectionGroup": "emergencyEvents", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "viewerAccessOpen", "order": "ASCENDING" }, { "fieldPath": "viewerAccessExpiresAt", "order": "ASCENDING" } ] },
     { "collectionGroup": "emergencyResponses", "queryScope": "COLLECTION", "fields": [
       { "fieldPath": "eventId", "order": "ASCENDING" }, { "fieldPath": "contactUserId", "order": "ASCENDING" } ] },
     { "collectionGroup": "emergencyResponses", "queryScope": "COLLECTION", "fields": [

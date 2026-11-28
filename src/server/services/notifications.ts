@@ -5,6 +5,12 @@ import { getStore } from "../store";
 import { COLLECTIONS, where } from "../store/types";
 
 export async function createNotification(input: {
+  /**
+   * Optional fixed id (E5.1). Emergency alerts use one derived from their response, so a retried
+   * send can never put a second copy in the contact's inbox: the create fails with
+   * StoreError("already_exists") instead. Everything else gets a random id, as before.
+   */
+  id?: string;
   recipientUserId: string;
   type: NotificationType;
   title: string;
@@ -14,7 +20,7 @@ export async function createNotification(input: {
   isSimulated?: boolean;
 }): Promise<AppNotification> {
   const n: AppNotification = {
-    id: newId("ntf"),
+    id: input.id ?? newId("ntf"),
     recipientUserId: input.recipientUserId,
     type: input.type,
     title: input.title,

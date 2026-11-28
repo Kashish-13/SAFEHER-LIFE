@@ -60,6 +60,15 @@ never blocking a real SOS, acknowledgement vs. dispatch, concurrent escalation, 
 leave/block/reject, resend vs. claim, startSharing vs. block, the expired-access sweep, retention, interrupted account
 deletion with cron recovery, and URL-id 404s (`e5-url-ids`).
 
+### E5.1 hardening
+
+* `e51-location`: resume vs. block, publish vs. stop, blocked/removed viewers of a leftover active session, expiry.
+* `e51-sos-dispatch`: alert failures after the SOS commit (all / partial), retry of queued alerts by a duplicate SOS
+  request, no re-send of finalized alerts, concurrent retries (also on the emulator), leases, idempotent inbox alerts.
+* `e51-tx-fixes`: simulated Firestore transaction re-runs (deletion audit) and SOS-lock conflicts (112 fallback kept).
+* `e51-indexes`: records every query the main service flows run and fails if one needs a composite index that
+  `firestore.indexes.json` lacks (the emulator doesn't enforce indexes).
+
 `tests/server/demo-order.test.ts` pins the order demo users see today (all seeded records share one `createdAt`, so
 tie order is visible). If it fails, a change altered demo-mode screens; decide that deliberately.
 

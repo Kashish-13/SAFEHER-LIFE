@@ -63,6 +63,28 @@ describe("SOS on Firestore", () => {
     expect((await store.get<EmergencyResponse>(COLLECTIONS.emergencyResponses, rid))!.status).toBe("acknowledged");
   });
 
+  it("E5.1: alerts that failed after commit are sent exactly once by 5 concurrent duplicate SOS requests", async () => {
+    const real = store.transact.bind(store);
+    const failOnce = new Set(["tc_demo_anita", "tc_demo_rajesh"]);
+    vi.spyOn(store, "transact").mockImplementation(async (col, id, fn) => {
+      const hit = col === COLLECTIONS.emergencyResponses && [...failOnce].find((c) => id.endsWith(`__${c}`));
+      if (hit) { failOnce.delete(hit); throw new StoreError("unavailable", "simulated outage while sending the alert"); }
+      return real(col, id, fn as never);
+    });
+    const priya = await user("demo_priya");
+    const first = await createEmergency(priya, { trigger: "manual", location: null });
+    expect(first.pendingAlerts).toBe(2);
+    vi.restoreAllMocks();
+    const retries = await Promise.all(Array.from({ length: 5 }, () => createEmergency(priya, { trigger: "manual", location: null })));
+    expect(retries.every((r) => r.deduplicated && r.event.id === first.event.id)).toBe(true);
+    for (const [uid, c] of [["demo_anita", "tc_demo_anita"], ["demo_rajesh", "tc_demo_rajesh"]] as const) {
+      const r = (await store.get<EmergencyResponse>(COLLECTIONS.emergencyResponses, `${first.event.id}__${c}`))!;
+      expect(r.status).toBe("sent");
+      expect(r.history.filter((h) => h.status === "sent")).toHaveLength(1);
+      expect(await alerts(uid, first.event.id)).toHaveLength(1);
+    }
+  });
+
   it("5 simultaneous escalation checks → secondary contacts alerted exactly once", async () => {
     const { event } = await createEmergency(await user("demo_priya"), { trigger: "manual", location: null });
     const later = new Date(Date.now() + 5 * 60_000);

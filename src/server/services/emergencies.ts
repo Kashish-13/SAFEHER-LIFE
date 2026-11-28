@@ -10,7 +10,7 @@ import { newId, nowISO } from "../ids";
 import { getStore } from "../store";
 import { COLLECTIONS, where, type WriteOp } from "../store/types";
 import { batchInChunks } from "../store/batching";
-import { dispatchAlert } from "./dispatcher";
+import { dispatchQueuedAlerts } from "./dispatcher";
 import { createNotification } from "./notifications";
 
 export interface CreateEmergencyInput {
@@ -92,7 +92,7 @@ async function recordVoiceTest(user: UserProfile, input: CreateEmergencyInput) {
   };
   await getStore().create(COLLECTIONS.emergencyEvents, event);
   await audit(user.id, "emergency.voice_test", "emergencyEvent", event.id, { simulated: true });
-  return { event, responses: [] as EmergencyResponse[], deduplicated: false };
+  return { event, responses: [] as EmergencyResponse[], deduplicated: false, pendingAlerts: 0 };
 }
 
 /**
@@ -173,7 +173,11 @@ export async function createEmergency(user: UserProfile, input: CreateEmergencyI
       });
     } catch (err) {
       // Contention or a backend hiccup: try again a couple of times, then send the person to 112.
-      const retriable = err instanceof StoreError && ["aborted", "unavailable"].includes(err.code);
+      // `already_exists` (E5.1, audit L3): the only document this transaction creates with a fixed id
+      // is the per-user lock (the event id is new on every attempt, and response ids derive from it),
+      // so it means a concurrent SOS created the lock first. Re-running re-reads that lock and returns
+      // the REAL existing emergency; it can't invent a duplicate. Anything else is not retried.
+      const retriable = err instanceof StoreError && ["aborted", "unavailable", "already_exists"].includes(err.code);
       if (retriable && attempt < SOS_EXTRA_ATTEMPTS) continue;
       if (err instanceof StoreError) {
         console.error("[sos] could not create emergency", err.code, err.message);
@@ -185,14 +189,24 @@ export async function createEmergency(user: UserProfile, input: CreateEmergencyI
   if (!outcome) throw new ApiError(503, "sos_unavailable", SOS_UNAVAILABLE);
 
   if ("existing" in outcome) {
-    return { event: outcome.existing, responses: await listResponses(outcome.existing.id), deduplicated: true };
+    // E5.1 (audit H1): the SOS already exists. If some of its alerts never left (the sender crashed
+    // or failed after the commit), send those now. Only responses still QUEUED are retried; anything
+    // sent, delivered, answered or failed is never re-sent, and a lease stops concurrent duplicate
+    // requests from sending the same alert twice.
+    const existing = outcome.existing;
+    const queued = (await listResponses(existing.id)).filter((r) => r.status === "queued");
+    let pendingAlerts = 0;
+    if (queued.length) pendingAlerts = (await dispatchQueuedAlerts(existing, queued)).failed;
+    return { event: existing, responses: await listResponses(existing.id), deduplicated: true, pendingAlerts };
   }
   // Side effects only after the commit succeeded.
   const { event } = outcome;
   await audit(user.id, "emergency.created", "emergencyEvent", event.id, { trigger: event.trigger, recipients: outcome.recipients, hasLocation: !!event.location, simulated: event.isSimulated });
-  // In parallel: everyone is alerted simultaneously.
-  const responses = await Promise.all(outcome.responses.map((r) => dispatchAlert(event, r)));
-  return { event, responses, deduplicated: false };
+  // In parallel: everyone is alerted simultaneously. A failure for one recipient never stops the
+  // others and never turns a SAVED emergency into an error: that alert stays queued and is retried.
+  const { responses, failed } = await dispatchQueuedAlerts(event, outcome.responses);
+  if (failed) console.error(`[sos] ${failed} alert(s) for ${event.id} could not be sent yet; they stay queued for retry`);
+  return { event, responses, deduplicated: false, pendingAlerts: failed };
 }
 
 const closedVoiceTestPatch = (now: string): Partial<EmergencyEvent> => ({
@@ -435,7 +449,9 @@ export async function runEscalation(eventId: string, now = new Date()) {
   if (!result.event) return { escalated: false, decision: { ...decision, contactsToNotify: [] } };
 
   const event = result.event;
-  const created = await Promise.all(result.created.map((r) => dispatchAlert(event, r)));
+  // Independent per recipient (E5.1): one failure doesn't stop the others or the owner's notice.
+  const { responses: created, failed } = await dispatchQueuedAlerts(event, result.created);
+  if (failed) console.error(`[escalation] ${failed} secondary alert(s) for ${eventId} could not be sent yet; they stay queued for retry`);
   await createNotification({
     recipientUserId: event.userId,
     type: "emergency_update",

@@ -24,6 +24,8 @@
 | Testing safety | Simulated triggers never alert real contacts (outside demo mode a voice test is recorded already closed, alerts nobody and can never block a real SOS); push is never sent for simulated events |
 | Concurrency (E5) | Invitation claims, owner approval, block/remove/leave, location sharing, SOS creation, escalation and closing run in store transactions (reads before writes, retried on conflict): one claimant per link; a concurrent approval can't restore a blocked/removed relationship; two SOS presses create one event and one set of alerts; secondary contacts are alerted once. Notifications, alerts and audit entries are written only **after** a successful commit. If an SOS can't be recorded safely the user is told to call 112 |
 | URL ids | Path parameters the store would reject (e.g. containing `/`) get a generic 404 before any service runs |
+| Location sharing (E5.1) | Pause/resume/stop run in a transaction; resume requires the contact link to still be `accepted`; publishing writes only to sessions still active; viewers whose link is no longer accepted see nothing, even if a race left a session active |
+| SOS alert reliability (E5.1) | A saved SOS is never reported as failed because an alert failed afterwards; failed alerts stay `queued` and are retried (leased, idempotent) by the next SOS press. Delivery is not guaranteed; the UI keeps "call 112" |
 
 ## Known limitations / production hardening
 

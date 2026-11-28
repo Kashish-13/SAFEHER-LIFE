@@ -210,6 +210,14 @@ export interface EmergencyResponse {
   status: ResponseStatus;
   history: StatusChange[];
   failureReason: string | null;
+  /**
+   * E5.1: short lease taken (in a transaction) by the request that is sending this still-queued
+   * alert, so concurrent duplicate SOS requests can't send it twice. Expires on its own, so an
+   * alert whose sender crashed is retried by the next duplicate SOS request.
+   */
+  dispatchLeaseUntil?: ISODate | null;
+  /** E5.1: how many send attempts were started for this alert. */
+  dispatchAttempts?: number;
   createdAt: ISODate;
   updatedAt: ISODate;
 }

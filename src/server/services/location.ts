@@ -60,40 +60,76 @@ export async function startSharing(owner: UserProfile, input: { contactId: strin
   return session;
 }
 
+/** True if the session's trusted-contact link is still ACCEPTED for the same account. */
+const linkStillAccepted = (s: Pick<LocationSession, "ownerId" | "contactUserId">, c: TrustedContact | null) =>
+  Boolean(c && c.ownerId === s.ownerId && c.status === "accepted" && c.contactUserId && c.contactUserId === s.contactUserId);
+
+/**
+ * Pause / resume / stop, in ONE transaction (E5.1). The session is re-read inside it, and a
+ * RESUME also re-reads the contact: it is refused unless the relationship is still accepted for
+ * the same account. So a resume racing a block can't revive a share for the blocked contact:
+ * either the block commits first and the resume sees it, or the resume commits first and the
+ * block's clean-up (which runs after the block commits) stops the session.
+ */
 export async function updateSharing(ownerId: string, id: string, action: "pause" | "resume" | "stop") {
   const store = getStore();
-  const s = await store.get<LocationSession>(COLLECTIONS.locationSessions, id);
-  if (!s || s.status === "stopped") throw notFound("Sharing session not found");
-  if (s.ownerId !== ownerId) throw forbidden();
-  const status = action === "pause" ? "paused" : action === "resume" ? "active" : "stopped";
-  // Stopping also wipes the last known position from the shared session.
-  const patch: Partial<LocationSession> = { status, updatedAt: nowISO(), ...(action === "stop" ? { lastLocation: null } : {}) };
-  const updated = await store.update<LocationSession>(COLLECTIONS.locationSessions, id, patch);
+  const updated = await store.runTransaction(async (tx) => {
+    const s = await tx.get<LocationSession>(COLLECTIONS.locationSessions, id);
+    if (!s || s.status === "stopped") throw notFound("Sharing session not found");
+    if (s.ownerId !== ownerId) throw forbidden();
+    if (action === "resume") {
+      const contact = await tx.get<TrustedContact>(COLLECTIONS.trustedContacts, s.contactId);
+      if (!linkStillAccepted(s, contact)) throw badRequest("You can only share with contacts who have accepted your invitation");
+    }
+    const status = action === "pause" ? "paused" : action === "resume" ? "active" : "stopped";
+    // Stopping also wipes the last known position from the shared session.
+    const patch: Partial<LocationSession> = { status, updatedAt: nowISO(), ...(action === "stop" ? { lastLocation: null } : {}) };
+    tx.update<LocationSession>(COLLECTIONS.locationSessions, id, patch);
+    return { ...s, ...patch } as LocationSession;
+  });
   await audit(ownerId, `location.share_${action}`, "locationSession", id);
   return updated;
 }
 
-/** Owner's device publishes its position to every live session. */
+/**
+ * Owner's device publishes its position to every live session.
+ * Each write is CONDITIONAL (E5.1): it re-reads the session and writes only while it is still
+ * active and unexpired, so a session stopped meanwhile (by the owner, or by a block/remove) never
+ * gets a position written back after its location was wiped.
+ */
 export async function publishLocation(ownerId: string, location: GeoPoint) {
   const store = getStore();
   const now = new Date();
   const sessions = await store.query<LocationSession>(COLLECTIONS.locationSessions, { where: [where("ownerId", "==", ownerId), where("status", "==", "active")] });
   const live = sessions.filter((s) => isSessionLive(s, now));
-  await Promise.all(live.map((s) => store.update(COLLECTIONS.locationSessions, s.id, { lastLocation: location, lastUpdatedAt: location.capturedAt })));
-  return { updatedSessions: live.length };
+  const written = await Promise.all(
+    live.map((s) =>
+      store.transact<LocationSession>(COLLECTIONS.locationSessions, s.id, (cur) =>
+        cur.ownerId === ownerId && isSessionLive(cur, now) ? { lastLocation: location, lastUpdatedAt: location.capturedAt } : null,
+      ),
+    ),
+  );
+  return { updatedSessions: written.filter(Boolean).length };
 }
 
-/** Sessions shared WITH the caller. Location is withheld unless access is currently valid. */
+/**
+ * Sessions shared WITH the caller. Location is withheld unless access is currently valid.
+ * Defense in depth (E5.1): each session's trusted-contact link is re-checked; a session whose
+ * link is no longer accepted (blocked, removed, left) is not listed at all, even if a race left
+ * the session itself active.
+ */
 export async function listSharedWithMe(viewerId: string) {
   const store = getStore();
   const now = new Date();
   const sessions = await store.query<LocationSession>(COLLECTIONS.locationSessions, { where: [where("contactUserId", "==", viewerId)] });
+  const candidates = sessions.filter((s) => s.status !== "stopped");
+  const links = await Promise.all(candidates.map((s) => store.get<TrustedContact>(COLLECTIONS.trustedContacts, s.contactId)));
+  const valid = candidates.filter((s, i) => linkStillAccepted(s, links[i]) && links[i]!.contactUserId === viewerId);
   return Promise.all(
-    sessions
-      .filter((s) => s.status !== "stopped")
+    valid
       .map(async (s) => {
         const owner = await store.get<UserProfile>(COLLECTIONS.users, s.ownerId);
-        const allowed = canViewLocation(s, viewerId, now);
+        const allowed = canViewLocation(s, viewerId, now, { linkActive: true });
         return {
           id: s.id,
           ownerName: owner?.fullName ?? "Unknown",

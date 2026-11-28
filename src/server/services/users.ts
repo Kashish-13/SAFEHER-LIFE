@@ -90,6 +90,10 @@ export async function deleteAccount(uid: string): Promise<void> {
   const now = nowISO();
   let firstRequest = false;
   await store.transact<UserProfile>(COLLECTIONS.users, uid, (cur) => {
+    // Reset on EVERY attempt (E5.1, audit L2): Firestore may re-run this callback. If an earlier
+    // attempt saw no deletion in progress but a concurrent request marked it before the retry,
+    // this request must not also log "deletion_started".
+    firstRequest = false;
     if (cur.deletionPendingAt) return null; // already in progress: just resume
     firstRequest = true;
     return { deletionPendingAt: now, updatedAt: now };
