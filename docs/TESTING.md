@@ -39,7 +39,18 @@ npm run test:emulator   # store tests (tests/emulator, vitest.emulator.config.ts
 ```
 
 Both start throwaway emulators, run the tests, and shut the emulators down again. `npm test` never needs Java or an
-emulator: `tests/emulator/**` and `tests/rules/**` are excluded from it. `tests/rules` is filled in at E6.
+emulator: `tests/emulator/**` and `tests/rules/**` are excluded from it.
+
+### Firestore security rules (E6)
+
+`npm run test:rules` runs `tests/rules/firestore.rules.test.ts` (config `vitest.rules.config.ts`) against
+`firestore.rules` in a throwaway Firestore emulator: **102 tests**. Every collection is checked for owner, other user,
+accepted contact, blocked contact, expired emergency viewer, signed-out user and a user with an admin custom claim, for
+reads, constrained/unconstrained queries and writes (role escalation, client-side approval/unblock, SOS status, viewer
+access, alert status, lock, audit log, evidence). A mutation check (weakening two rules) made 7 tests fail as expected.
+Note: `vitest run --dir tests/rules` with the DEFAULT config finds **0 tests** (that config excludes `tests/rules`), so
+always use `npm run test:rules`. Storage rules (`storage.rules`) are not tested: Storage isn't configured (Blaze-only)
+and the evidence vault that would use it isn't implemented.
 
 ### Store contract (E4)
 
