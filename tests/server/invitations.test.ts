@@ -47,7 +47,8 @@ describe("trusted contact invitations", () => {
 
   it("users can only modify their own contacts", async () => {
     const res = await updateContact(req("PATCH", "", { as: "demo_meera", body: { action: "block" } }), params({ id: "tc_demo_anita" }));
-    expect(res.status).toBe(403);
+    // E6 / audit L1: someone else's contact is answered exactly like a missing one (was 403).
+    expect(res.status).toBe(404);
   });
 
   it("blocked contacts are excluded from emergency alerts", async () => {

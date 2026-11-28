@@ -58,6 +58,21 @@ npm run typecheck
 npm run build
 ```
 
+Firebase Emulator tests (local only, fake project `demo-safeher-life`; need Java 21 and firebase-tools, see
+[docs/EMULATOR.md](docs/EMULATOR.md)):
+
+```bash
+npm run test:rules     # Firestore security rules (102 tests)
+npm run test:emulator  # FirestoreStore contract, store parity, service transactions
+```
+
+## Project status
+
+Phase 1 (Firebase backend) is built and tested locally, and **nothing is deployed**. The emulator setup, the store
+contract (E4), transactional services (E5), location/SOS hardening (E5.1) and the rules test suite plus audit fixes
+(E6) are done. Firestore rules and indexes still have to be deployed to a real project. Unattended escalation needs the
+Phase 2 scheduler. Open items: [docs/RELEASE-CHECKLIST.md](docs/RELEASE-CHECKLIST.md).
+
 > The npm scripts call `node node_modules/...` directly because npm's Windows `.cmd` shims break on folder paths that
 > contain `&`. They work the same on every OS.
 
@@ -83,6 +98,9 @@ Production without Firebase **and** without explicit demo opt-in fails closed (n
 | [docs/SECURITY.md](docs/SECURITY.md) | Threat model, controls, known limitations |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Firebase + Vercel setup, step by step |
 | [docs/TESTING.md](docs/TESTING.md) | Test strategy, running tests, manual test scripts |
+| [docs/EMULATOR.md](docs/EMULATOR.md) | Local Firebase Emulator setup, ports, safety guards |
+| [docs/RELEASE-CHECKLIST.md](docs/RELEASE-CHECKLIST.md) | What must happen before a real release; known limitations |
+| [docs/PROGRESS.md](docs/PROGRESS.md) | Release-preparation milestones and feature inventory |
 | [docs/MOBILE.md](docs/MOBILE.md) | React Native + Kotlin voice SOS plan and platform limits |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Remaining phases |
 

@@ -39,7 +39,18 @@ npm run test:emulator   # store tests (tests/emulator, vitest.emulator.config.ts
 ```
 
 Both start throwaway emulators, run the tests, and shut the emulators down again. `npm test` never needs Java or an
-emulator: `tests/emulator/**` and `tests/rules/**` are excluded from it. `tests/rules` is filled in at E6.
+emulator: `tests/emulator/**` and `tests/rules/**` are excluded from it.
+
+### Firestore security rules (E6)
+
+`npm run test:rules` runs `tests/rules/firestore.rules.test.ts` (config `vitest.rules.config.ts`) against
+`firestore.rules` in a throwaway Firestore emulator: **102 tests**. Every collection is checked for owner, other user,
+accepted contact, blocked contact, expired emergency viewer, signed-out user and a user with an admin custom claim, for
+reads, constrained/unconstrained queries and writes (role escalation, client-side approval/unblock, SOS status, viewer
+access, alert status, lock, audit log, evidence). A mutation check (weakening two rules) made 7 tests fail as expected.
+Note: `vitest run --dir tests/rules` with the DEFAULT config finds **0 tests** (that config excludes `tests/rules`), so
+always use `npm run test:rules`. Storage rules (`storage.rules`) are not tested: Storage isn't configured (Blaze-only)
+and the evidence vault that would use it isn't implemented.
 
 ### Store contract (E4)
 
@@ -51,6 +62,29 @@ emulator: `tests/emulator/**` and `tests/rules/**` are excluded from it. `tests/
 `tests/emulator/parity.test.ts` runs one scripted sequence (claim, SOS batch, escalation, revocation, failures) on both
 stores and requires identical results and error codes. The emulator tests refuse to run unless `FIRESTORE_EMULATOR_HOST`
 is a loopback address, the project is `demo-safeher-life` and no credential variable is set (`tests/emulator/harness.ts`).
+
+### Service transactions (E5)
+
+Race tests run every approved flow concurrently on `MemoryStore` (`tests/server/e5-*.test.ts`) and the key ones again on
+Firestore's real transaction engine (`tests/emulator/services.test.ts`): duplicate SOS, stale/legacy SOS locks, voice tests
+never blocking a real SOS, acknowledgement vs. dispatch, concurrent escalation, invitation claims, approve vs.
+leave/block/reject, resend vs. claim, startSharing vs. block, the expired-access sweep, retention, interrupted account
+deletion with cron recovery, and URL-id 404s (`e5-url-ids`).
+
+### E5.1 hardening
+
+* `e51-location`: resume vs. block, publish vs. stop, blocked/removed viewers of a leftover active session, expiry.
+* `e51-sos-dispatch`: alert failures after the SOS commit (all / partial), retry of queued alerts by a duplicate SOS
+  request, no re-send of finalized alerts, concurrent retries (also on the emulator), leases, idempotent inbox alerts.
+* `e51-tx-fixes`: simulated Firestore transaction re-runs (deletion audit) and SOS-lock conflicts (112 fallback kept).
+* `e51-indexes`: records every query the main service flows run and fails if one needs a composite index that
+  `firestore.indexes.json` lacks (the emulator doesn't enforce indexes).
+
+### E6 hardening
+
+* `e6-hardening`: someone else's contact, circle, location share, notification or journey gives exactly the same error
+  as a missing id (audit L1); newest-first lists break equal timestamps by id (audit L5). All 9 tests failed on the
+  pre-E6 services.
 
 `tests/server/demo-order.test.ts` pins the order demo users see today (all seeded records share one `createdAt`, so
 tie order is visible). If it fails, a change altered demo-mode screens; decide that deliberately.

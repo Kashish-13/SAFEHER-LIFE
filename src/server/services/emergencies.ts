@@ -1,14 +1,16 @@
 import { evaluateEscalation, selectInitialRecipients } from "@/core/escalation";
-import { applyStatus, summarizeResponses } from "@/core/notification-status";
+import { applyStatus, canTransition, summarizeResponses } from "@/core/notification-status";
 import { ACCESS_DENIED_MESSAGES, canManageEmergency, emergencyAccess, viewerAccessExpiry, type Principal } from "@/core/permissions";
-import type { EmergencyCircle, EmergencyEvent, EmergencyResponse, EmergencyTrigger, GeoPoint, TrustedContact, UserProfile } from "@/core/types";
+import type { ActiveEmergencyLock, EmergencyCircle, EmergencyEvent, EmergencyResponse, EmergencyTrigger, GeoPoint, TrustedContact, UserProfile } from "@/core/types";
 import { audit } from "../audit";
 import { isDemoMode } from "../env";
-import { badRequest, conflict, forbidden, notFound } from "../errors";
+import { ApiError, badRequest, conflict, forbidden, notFound } from "../errors";
+import { StoreError } from "../store/errors";
 import { newId, nowISO } from "../ids";
 import { getStore } from "../store";
-import { COLLECTIONS, where } from "../store/types";
-import { dispatchAlert } from "./dispatcher";
+import { COLLECTIONS, where, type WriteOp } from "../store/types";
+import { batchInChunks } from "../store/batching";
+import { dispatchQueuedAlerts } from "./dispatcher";
 import { createNotification } from "./notifications";
 
 export interface CreateEmergencyInput {
@@ -64,63 +66,152 @@ export async function assertEmergencyAccess(principal: Principal, event: Emergen
  * Works independently of voice detection: voice triggers (native app) and
  * manual SOS call this same function through POST /api/emergencies.
  */
+/** Shown when an SOS can't be recorded safely. The person may be in danger: always point to 112. */
+const SOS_UNAVAILABLE = "We couldn't raise your alert right now. Call 112 immediately, then try again.";
+/** Extra attempts after the store's own 5 transaction retries, before telling the user to call 112. */
+const SOS_EXTRA_ATTEMPTS = 2;
+
+/**
+ * Outside demo mode a `voice_simulated` trigger is a TEST of the voice pipeline. It is recorded
+ * already CLOSED, never takes the SOS lock and alerts nobody, so it can never be mistaken for, or
+ * suppress, a real emergency. (In demo mode everything is simulated and it behaves like an SOS.)
+ */
+const isVoiceTest = (trigger: EmergencyTrigger) => trigger === "voice_simulated" && !isDemoMode();
+
+/** An event that blocks a new SOS: active, and not a voice test (legacy test records included). */
+const blocksNewSos = (e: EmergencyEvent | null): e is EmergencyEvent => Boolean(e && e.status === "active" && !isVoiceTest(e.trigger));
+
+async function recordVoiceTest(user: UserProfile, input: CreateEmergencyInput) {
+  const now = nowISO();
+  const event: EmergencyEvent = {
+    id: newId("sos"), userId: user.id, userName: user.fullName, trigger: input.trigger, status: "cancelled",
+    location: null, escalationLevel: 0, escalationConfig: { ...user.emergencyPreferences.escalation, enabled: false },
+    isSimulated: true, authorizedViewerIds: [], viewerAccessExpiresAt: now, viewerAccessOpen: false,
+    note: "Simulated voice trigger test. No contacts were alerted.",
+    createdAt: now, updatedAt: now, cancelledAt: now, resolvedAt: null,
+  };
+  await getStore().create(COLLECTIONS.emergencyEvents, event);
+  await audit(user.id, "emergency.voice_test", "emergencyEvent", event.id, { simulated: true });
+  return { event, responses: [] as EmergencyResponse[], deduplicated: false, pendingAlerts: 0 };
+}
+
+/**
+ * Creates an emergency and alerts the first tier of contacts simultaneously.
+ *
+ * Duplicate-proof: ONE transaction reads the per-user lock (activeEmergencies/{userId}), the
+ * user's active events, contacts and circles, then writes the lock, the event and every
+ * first-tier response together. A second press (or a second device) racing it is re-run by the
+ * store, sees the lock, and gets the existing event back (`deduplicated: true`). A lock pointing
+ * at a missing/closed event is stale and is replaced. Alerts and audit run only after commit.
+ */
 export async function createEmergency(user: UserProfile, input: CreateEmergencyInput) {
+  if (isVoiceTest(input.trigger)) return recordVoiceTest(user, input);
   const store = getStore();
 
-  // One active emergency at a time: a second press returns the existing event instead of duplicating alerts.
-  const [active] = await store.query<EmergencyEvent>(COLLECTIONS.emergencyEvents, {
-    where: [where("userId", "==", user.id), where("status", "==", "active")],
-    limit: 1,
-  });
-  if (active) return { event: active, responses: await listResponses(active.id), deduplicated: true };
+  type Outcome = { existing: EmergencyEvent } | { event: EmergencyEvent; responses: EmergencyResponse[]; recipients: number };
+  let outcome: Outcome | null = null;
+  for (let attempt = 0; attempt <= SOS_EXTRA_ATTEMPTS && !outcome; attempt++) {
+    try {
+      outcome = await store.runTransaction<Outcome>(async (tx) => {
+        // ── reads ──
+        const lock = await tx.get<ActiveEmergencyLock>(COLLECTIONS.activeEmergencies, user.id);
+        const locked = lock ? await tx.get<EmergencyEvent>(COLLECTIONS.emergencyEvents, lock.eventId) : null;
+        // Also catches active events from before the lock existed, and legacy open voice tests.
+        const actives = await tx.query<EmergencyEvent>(COLLECTIONS.emergencyEvents, {
+          where: [where("userId", "==", user.id), where("status", "==", "active")],
+        });
+        const contacts = await tx.query<TrustedContact>(COLLECTIONS.trustedContacts, { where: [where("ownerId", "==", user.id)] });
+        // Scope: explicit ids > requested circles > preference circles > everyone.
+        let scope: string[] | null = input.contactIds ?? null;
+        const circleIds = input.circleIds?.length ? input.circleIds : user.emergencyPreferences.notifyCircleIds;
+        if (!scope && circleIds.length > 0) {
+          const circles = await tx.query<EmergencyCircle>(COLLECTIONS.emergencyCircles, { where: [where("ownerId", "==", user.id)] });
+          scope = circles.filter((c) => circleIds.includes(c.id)).flatMap((c) => c.contactIds);
+        }
 
-  const contacts = await store.query<TrustedContact>(COLLECTIONS.trustedContacts, { where: [where("ownerId", "==", user.id)] });
+        // ── decide ──
+        const now = nowISO();
+        const current = blocksNewSos(locked) ? locked : actives.find(blocksNewSos) ?? null;
+        // Legacy voice tests left open (before this fix) are closed so they can never block again.
+        const staleTests = actives.filter((e) => isVoiceTest(e.trigger));
+        if (current) {
+          for (const t of staleTests) tx.update<EmergencyEvent>(COLLECTIONS.emergencyEvents, t.id, closedVoiceTestPatch(now));
+          if (!lock) tx.create<ActiveEmergencyLock>(COLLECTIONS.activeEmergencies, { id: user.id, userId: user.id, eventId: current.id, createdAt: now });
+          else if (lock.eventId !== current.id) tx.update<ActiveEmergencyLock>(COLLECTIONS.activeEmergencies, user.id, { eventId: current.id });
+          return { existing: current };
+        }
 
-  // Resolve which contacts are in scope: explicit ids > requested circles > preference circles > everyone.
-  let scope: string[] | null = input.contactIds ?? null;
-  const circleIds = input.circleIds?.length ? input.circleIds : user.emergencyPreferences.notifyCircleIds;
-  if (!scope && circleIds.length > 0) {
-    const circles = await store.query<EmergencyCircle>(COLLECTIONS.emergencyCircles, { where: [where("ownerId", "==", user.id)] });
-    scope = circles.filter((c) => circleIds.includes(c.id)).flatMap((c) => c.contactIds);
+        const { recipients } = selectInitialRecipients(contacts, scope);
+        const shareLocation = user.emergencyPreferences.shareLocationOnSOS && input.location !== null;
+        const event: EmergencyEvent = {
+          id: newId("sos"),
+          userId: user.id,
+          userName: user.fullName,
+          trigger: input.trigger,
+          status: "active",
+          location: shareLocation ? input.location : null,
+          escalationLevel: 0,
+          escalationConfig: user.emergencyPreferences.escalation,
+          isSimulated: isDemoMode() || input.trigger === "voice_simulated",
+          authorizedViewerIds: recipients.map((c) => c.contactUserId).filter((x): x is string => Boolean(x)),
+          viewerAccessExpiresAt: null,
+          note: input.note ?? null,
+          createdAt: now,
+          updatedAt: now,
+          cancelledAt: null,
+          resolvedAt: null,
+        };
+        const responses = recipients.map((c) => newResponse(event, c, c.priority));
+
+        // ── writes (lock + event + responses: all or nothing) ──
+        for (const t of staleTests) tx.update<EmergencyEvent>(COLLECTIONS.emergencyEvents, t.id, closedVoiceTestPatch(now));
+        if (lock) tx.update<ActiveEmergencyLock>(COLLECTIONS.activeEmergencies, user.id, { eventId: event.id, createdAt: now });
+        else tx.create<ActiveEmergencyLock>(COLLECTIONS.activeEmergencies, { id: user.id, userId: user.id, eventId: event.id, createdAt: now });
+        tx.create(COLLECTIONS.emergencyEvents, event);
+        for (const r of responses) tx.create(COLLECTIONS.emergencyResponses, r);
+        return { event, responses, recipients: recipients.length };
+      });
+    } catch (err) {
+      // Contention or a backend hiccup: try again a couple of times, then send the person to 112.
+      // `already_exists` (E5.1, audit L3): the only document this transaction creates with a fixed id
+      // is the per-user lock (the event id is new on every attempt, and response ids derive from it),
+      // so it means a concurrent SOS created the lock first. Re-running re-reads that lock and returns
+      // the REAL existing emergency; it can't invent a duplicate. Anything else is not retried.
+      const retriable = err instanceof StoreError && ["aborted", "unavailable", "already_exists"].includes(err.code);
+      if (retriable && attempt < SOS_EXTRA_ATTEMPTS) continue;
+      if (err instanceof StoreError) {
+        console.error("[sos] could not create emergency", err.code, err.message);
+        throw new ApiError(503, "sos_unavailable", SOS_UNAVAILABLE);
+      }
+      throw err;
+    }
   }
-  // A simulated trigger with real (non-demo) data is a DRY RUN: the event is recorded for the user
-  // to inspect, but no real contact is alerted. Real people are never alerted by a test.
-  const dryRun = input.trigger === "voice_simulated" && !isDemoMode();
-  const { recipients } = dryRun ? { recipients: [] as TrustedContact[] } : selectInitialRecipients(contacts, scope);
+  if (!outcome) throw new ApiError(503, "sos_unavailable", SOS_UNAVAILABLE);
 
-  const now = nowISO();
-  const shareLocation = user.emergencyPreferences.shareLocationOnSOS && input.location !== null;
-  const event: EmergencyEvent = {
-    id: newId("sos"),
-    userId: user.id,
-    userName: user.fullName,
-    trigger: input.trigger,
-    status: "active",
-    location: shareLocation ? input.location : null,
-    escalationLevel: 0,
-    escalationConfig: user.emergencyPreferences.escalation,
-    isSimulated: isDemoMode() || input.trigger === "voice_simulated",
-    authorizedViewerIds: recipients.map((c) => c.contactUserId).filter((x): x is string => Boolean(x)),
-    viewerAccessExpiresAt: null,
-    note: dryRun ? "Simulated voice trigger test. No contacts were alerted." : input.note ?? null,
-    createdAt: now,
-    updatedAt: now,
-    cancelledAt: null,
-    resolvedAt: null,
-  };
-  if (dryRun) event.escalationConfig = { ...event.escalationConfig, enabled: false };
-  await store.create(COLLECTIONS.emergencyEvents, event);
-  await audit(user.id, "emergency.created", "emergencyEvent", event.id, { trigger: event.trigger, recipients: recipients.length, hasLocation: !!event.location, simulated: event.isSimulated });
-
-  const responses = await Promise.all(
-    recipients.map(async (c) => {
-      const r = await store.create(COLLECTIONS.emergencyResponses, newResponse(event, c, c.priority));
-      return dispatchAlert(event, r); // in parallel: everyone is alerted simultaneously
-    }),
-  );
-
-  return { event, responses, deduplicated: false };
+  if ("existing" in outcome) {
+    // E5.1 (audit H1): the SOS already exists. If some of its alerts never left (the sender crashed
+    // or failed after the commit), send those now. Only responses still QUEUED are retried; anything
+    // sent, delivered, answered or failed is never re-sent, and a lease stops concurrent duplicate
+    // requests from sending the same alert twice.
+    const existing = outcome.existing;
+    const queued = (await listResponses(existing.id)).filter((r) => r.status === "queued");
+    let pendingAlerts = 0;
+    if (queued.length) pendingAlerts = (await dispatchQueuedAlerts(existing, queued)).failed;
+    return { event: existing, responses: await listResponses(existing.id), deduplicated: true, pendingAlerts };
+  }
+  // Side effects only after the commit succeeded.
+  const { event } = outcome;
+  await audit(user.id, "emergency.created", "emergencyEvent", event.id, { trigger: event.trigger, recipients: outcome.recipients, hasLocation: !!event.location, simulated: event.isSimulated });
+  // In parallel: everyone is alerted simultaneously. A failure for one recipient never stops the
+  // others and never turns a SAVED emergency into an error: that alert stays queued and is retried.
+  const { responses, failed } = await dispatchQueuedAlerts(event, outcome.responses);
+  if (failed) console.error(`[sos] ${failed} alert(s) for ${event.id} could not be sent yet; they stay queued for retry`);
+  return { event, responses, deduplicated: false, pendingAlerts: failed };
 }
+
+const closedVoiceTestPatch = (now: string): Partial<EmergencyEvent> => ({
+  status: "cancelled", cancelledAt: now, updatedAt: now, viewerAccessExpiresAt: now, viewerAccessOpen: false, authorizedViewerIds: [],
+});
 
 export async function getEmergency(principal: Principal, id: string) {
   const event = await getStore().get<EmergencyEvent>(COLLECTIONS.emergencyEvents, id);
@@ -141,11 +232,13 @@ export async function listResponses(eventId: string) {
 }
 
 export async function listEmergencyHistory(uid: string) {
-  return getStore().query<EmergencyEvent>(COLLECTIONS.emergencyEvents, {
+  const events = await getStore().query<EmergencyEvent>(COLLECTIONS.emergencyEvents, {
     where: [where("userId", "==", uid)],
     orderBy: { field: "createdAt", direction: "desc" },
     limit: 100,
   });
+  // Newest first; the id breaks ties so both stores give the same order.
+  return events.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
 }
 
 /** Alerts addressed to the caller as a trusted contact, ONLY those they can still access. */
@@ -163,16 +256,17 @@ export async function listAlertsForContact(uid: string, now = new Date()) {
   return out.sort((a, b) => b.event.createdAt.localeCompare(a.event.createdAt)).slice(0, 50);
 }
 
-/** Recipient's client fetched the alert → "delivered" (only from "sent"). */
+/** Recipient's client fetched the alert → "delivered" (from "queued" or "sent"; never backwards). */
 export async function markDeliveredForRecipient(eventId: string, contactUserId: string) {
   const store = getStore();
   const rs = await store.query<EmergencyResponse>(COLLECTIONS.emergencyResponses, {
     where: [where("eventId", "==", eventId), where("contactUserId", "==", contactUserId)],
   });
+  const opened = (s: EmergencyResponse["status"]) => s === "queued" || s === "sent";
   for (const r of rs) {
-    if (r.status !== "sent") continue;
+    if (!opened(r.status)) continue;
     await store.transact<EmergencyResponse>(COLLECTIONS.emergencyResponses, r.id, (cur) =>
-      cur.status === "sent" ? applyStatus(cur, "delivered", nowISO(), "Opened on recipient's device") : null,
+      opened(cur.status) ? applyStatus(cur, "delivered", nowISO(), "Opened on recipient's device") : null,
     );
   }
 }
@@ -190,9 +284,17 @@ export async function respondToEmergency(principal: Principal, eventId: string, 
   if (action !== "delivered" && event.status !== "active") throw conflict("This emergency is no longer active");
 
   const to = action === "delivered" ? "delivered" : action === "acknowledge" ? "acknowledged" : "declined";
-  const updated = await store.transact<EmergencyResponse>(COLLECTIONS.emergencyResponses, response.id, (cur) =>
-    cur.status === to ? null : applyStatus(cur, to, nowISO()),
-  );
+  const updated = await store.transact<EmergencyResponse>(COLLECTIONS.emergencyResponses, response.id, (cur) => {
+    if (cur.status === to) return null; // already recorded
+    if (!canTransition(cur.status, to)) {
+      // "delivered" after the person already answered is simply already covered.
+      if (action === "delivered") return null;
+      throw conflict(cur.status === "acknowledged" || cur.status === "declined"
+        ? "You've already responded to this alert"
+        : "This alert can't be answered right now");
+    }
+    return applyStatus(cur, to, nowISO());
+  });
   if (updated && action !== "delivered") {
     await createNotification({
       recipientUserId: event.userId,
@@ -213,14 +315,21 @@ export async function closeEmergency(principal: Principal, eventId: string, acti
   const event = await store.get<EmergencyEvent>(COLLECTIONS.emergencyEvents, eventId);
   if (!event) throw notFound("Emergency not found");
   if (!canManageEmergency(principal, event)) throw forbidden("Only the person who raised the emergency can close it");
-  const now = nowISO();
-  // Contacts keep access for 24 h after closure, for both resolved AND cancelled events.
-  const viewerAccessExpiresAt = viewerAccessExpiry(now);
-  const updated = await store.transact<EmergencyEvent>(COLLECTIONS.emergencyEvents, eventId, (cur) => {
-    if (cur.status !== "active") return null;
-    return action === "cancel"
-      ? { status: "cancelled", cancelledAt: now, updatedAt: now, viewerAccessExpiresAt, note: note ?? cur.note }
-      : { status: "resolved", resolvedAt: now, updatedAt: now, viewerAccessExpiresAt, note: note ?? cur.note };
+  // Close the event and release the per-user SOS lock in ONE transaction, so a new SOS can never
+  // see a closed event as active, nor a released lock while the event is still active.
+  const updated = await store.runTransaction(async (tx) => {
+    const cur = await tx.get<EmergencyEvent>(COLLECTIONS.emergencyEvents, eventId);
+    const lock = await tx.get<ActiveEmergencyLock>(COLLECTIONS.activeEmergencies, event.userId);
+    if (!cur || cur.status !== "active") return null;
+    const now = nowISO();
+    // Contacts keep access for 24 h after closure, for both resolved AND cancelled events.
+    const viewerAccessExpiresAt = viewerAccessExpiry(now);
+    const patch: Partial<EmergencyEvent> = action === "cancel"
+      ? { status: "cancelled", cancelledAt: now, updatedAt: now, viewerAccessExpiresAt, viewerAccessOpen: true, note: note ?? cur.note }
+      : { status: "resolved", resolvedAt: now, updatedAt: now, viewerAccessExpiresAt, viewerAccessOpen: true, note: note ?? cur.note };
+    tx.update<EmergencyEvent>(COLLECTIONS.emergencyEvents, eventId, patch);
+    if (lock?.eventId === eventId) tx.delete(COLLECTIONS.activeEmergencies, event.userId);
+    return { ...cur, ...patch } as EmergencyEvent;
   });
   if (!updated) throw conflict("This emergency is already closed");
 
@@ -263,56 +372,88 @@ export async function revokeViewerAccess(ownerId: string, contactUserId: string)
   return { revokedEvents: events.length };
 }
 
+const ACCESS_SWEEP_PAGE = 200;
+const ACCESS_SWEEP_MAX_PAGES = 25; // bounded work per run; the next run continues
+
 /**
  * Sweep: after the 24 h window, physically removes viewers from closed events so
  * access is revoked in stored data too, not only by the API's time check.
+ *
+ * Only events still flagged `viewerAccessOpen` are read, so already-swept events can never fill
+ * the page and starve newer ones. Each event is re-checked and cleared in its own transaction
+ * (closed, expired, still open), which makes the sweep idempotent and safe to run concurrently.
+ * Events closed before this flag existed are not visited; the API time check still blocks them.
  */
 export async function applyAccessExpiry(now = new Date()) {
   const store = getStore();
-  const expired = await store.query<EmergencyEvent>(COLLECTIONS.emergencyEvents, {
-    where: [where("viewerAccessExpiresAt", "<=", now.toISOString())],
-    limit: 500,
-  });
+  const cutoff = now.toISOString();
   let revoked = 0;
-  for (const e of expired) {
-    if (e.status === "active" || e.authorizedViewerIds.length === 0) continue;
-    await store.update<EmergencyEvent>(COLLECTIONS.emergencyEvents, e.id, { authorizedViewerIds: [], updatedAt: nowISO() });
-    revoked++;
+  for (let page = 0; page < ACCESS_SWEEP_MAX_PAGES; page++) {
+    const due = await store.query<EmergencyEvent>(COLLECTIONS.emergencyEvents, {
+      where: [where("viewerAccessOpen", "==", true), where("viewerAccessExpiresAt", "<=", cutoff)],
+      limit: ACCESS_SWEEP_PAGE,
+    });
+    let progressed = 0;
+    for (const e of due) {
+      let hadViewers = false;
+      const done = await store.transact<EmergencyEvent>(COLLECTIONS.emergencyEvents, e.id, (cur) => {
+        if (cur.viewerAccessOpen !== true || cur.status === "active") return null;
+        if (!cur.viewerAccessExpiresAt || cur.viewerAccessExpiresAt > cutoff) return null;
+        hadViewers = cur.authorizedViewerIds.length > 0;
+        return { authorizedViewerIds: [], viewerAccessOpen: false, updatedAt: nowISO() };
+      });
+      if (done) {
+        progressed++;
+        if (hadViewers) revoked++;
+      }
+    }
+    if (due.length < ACCESS_SWEEP_PAGE || progressed === 0) break; // done, or nothing more we can clear
   }
   if (revoked) await audit(null, "emergency.viewer_access_expired", "emergencyEvent", null, { events: revoked });
   return { revoked };
 }
 
 /**
- * Runs the escalation policy for an event. Idempotent and safe to call
- * concurrently: the escalationLevel 0→1 flip happens in a transaction, and
- * only the caller that wins the flip dispatches secondary alerts.
+ * Runs the escalation policy for an event. Idempotent and safe to call concurrently.
+ *
+ * ONE transaction reads the event, its responses and the owner's contacts, decides, and writes
+ * the escalation flag, the new viewers and every secondary response together. So a crash can no
+ * longer leave the flag set with secondary contacts never alerted, and concurrent callers are
+ * serialised: the loser is re-run, sees escalationLevel 1, and does nothing. Alerts, the owner's
+ * notification and the audit entry run only after the commit.
  */
 export async function runEscalation(eventId: string, now = new Date()) {
   const store = getStore();
-  const event = await store.get<EmergencyEvent>(COLLECTIONS.emergencyEvents, eventId);
-  if (!event) throw notFound("Emergency not found");
-  const responses = await listResponses(eventId);
-  const contacts = await store.query<TrustedContact>(COLLECTIONS.trustedContacts, { where: [where("ownerId", "==", event.userId)] });
-  const decision = evaluateEscalation(event, responses, contacts, now);
-  if (!decision.shouldEscalate) return { escalated: false, decision: { ...decision, contactsToNotify: [] } };
+  const result = await store.runTransaction(async (tx) => {
+    const event = await tx.get<EmergencyEvent>(COLLECTIONS.emergencyEvents, eventId);
+    if (!event) throw notFound("Emergency not found");
+    const responses = await tx.query<EmergencyResponse>(COLLECTIONS.emergencyResponses, { where: [where("eventId", "==", eventId)] });
+    const contacts = await tx.query<TrustedContact>(COLLECTIONS.trustedContacts, { where: [where("ownerId", "==", event.userId)] });
+    const decision = evaluateEscalation(event, responses, contacts, now);
+    if (!decision.shouldEscalate) return { decision, event: null, created: [] as EmergencyResponse[] };
 
-  const newViewerIds = decision.contactsToNotify.map((c) => c.contactUserId).filter((x): x is string => Boolean(x));
-  const won = await store.transact<EmergencyEvent>(COLLECTIONS.emergencyEvents, eventId, (cur) =>
-    cur.escalationLevel >= 1 || cur.status !== "active"
-      ? null
-      : { escalationLevel: 1, authorizedViewerIds: [...new Set([...cur.authorizedViewerIds, ...newViewerIds])], updatedAt: nowISO() },
-  );
-  if (!won) return { escalated: false, decision: { ...decision, reason: "already_escalated" as const, contactsToNotify: [] } };
+    const newViewerIds = decision.contactsToNotify.map((c) => c.contactUserId).filter((x): x is string => Boolean(x));
+    const patch: Partial<EmergencyEvent> = {
+      escalationLevel: 1,
+      authorizedViewerIds: [...new Set([...event.authorizedViewerIds, ...newViewerIds])],
+      updatedAt: nowISO(),
+    };
+    const escalatedEvent = { ...event, ...patch } as EmergencyEvent;
+    const existingIds = new Set(responses.map((r) => r.id));
+    const created = decision.contactsToNotify
+      .map((c) => newResponse(escalatedEvent, c, "secondary"))
+      .filter((r) => !existingIds.has(r.id)); // deterministic ids: never two responses per contact
+    tx.update<EmergencyEvent>(COLLECTIONS.emergencyEvents, eventId, patch);
+    for (const r of created) tx.create(COLLECTIONS.emergencyResponses, r);
+    return { decision, event: escalatedEvent, created };
+  });
+  const { decision } = result;
+  if (!result.event) return { escalated: false, decision: { ...decision, contactsToNotify: [] } };
 
-  const created = await Promise.all(
-    decision.contactsToNotify.map(async (c) => {
-      const r = newResponse(won, c, "secondary");
-      if (await store.get(COLLECTIONS.emergencyResponses, r.id)) return null; // dedup guard
-      await store.create(COLLECTIONS.emergencyResponses, r);
-      return dispatchAlert(won, r);
-    }),
-  );
+  const event = result.event;
+  // Independent per recipient (E5.1): one failure doesn't stop the others or the owner's notice.
+  const { responses: created, failed } = await dispatchQueuedAlerts(event, result.created);
+  if (failed) console.error(`[escalation] ${failed} secondary alert(s) for ${eventId} could not be sent yet; they stay queued for retry`);
   await createNotification({
     recipientUserId: event.userId,
     type: "emergency_update",
@@ -322,8 +463,8 @@ export async function runEscalation(eventId: string, now = new Date()) {
     eventId,
     isSimulated: event.isSimulated,
   });
-  await audit(null, "emergency.escalated", "emergencyEvent", eventId, { notified: created.filter(Boolean).length });
-  return { escalated: true, decision: { ...decision, contactsToNotify: [] }, notified: created.filter(Boolean).length };
+  await audit(null, "emergency.escalated", "emergencyEvent", eventId, { notified: created.length });
+  return { escalated: true, decision: { ...decision, contactsToNotify: [] }, notified: created.length };
 }
 
 export async function runAllEscalations(now = new Date()) {
@@ -353,9 +494,11 @@ export async function applyRetention(now = new Date()) {
     const cutoff = new Date(now.getTime() - days * 86_400_000).toISOString();
     const old = await store.query<EmergencyEvent>(COLLECTIONS.emergencyEvents, { where: [where("userId", "==", u.id), where("createdAt", "<", cutoff)] });
     for (const e of old.filter((x) => x.status !== "active")) {
+      // An event and its responses go together (batches of ≤ 500, the event in the LAST one), so a
+      // failure never leaves an event without its responses, and the next run simply continues.
       const rs = await listResponses(e.id);
-      await Promise.all(rs.map((r) => store.delete(COLLECTIONS.emergencyResponses, r.id)));
-      await store.delete(COLLECTIONS.emergencyEvents, e.id);
+      const ops: WriteOp[] = [...rs.map((r) => ({ type: "delete" as const, collection: COLLECTIONS.emergencyResponses, id: r.id })), { type: "delete", collection: COLLECTIONS.emergencyEvents, id: e.id }];
+      await batchInChunks(store, ops);
       deleted++;
     }
   }

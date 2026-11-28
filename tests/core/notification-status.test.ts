@@ -17,10 +17,23 @@ describe("notification delivery states", () => {
     expect(r.history.map((h) => h.status)).toEqual(["queued", "sent", "delivered", "acknowledged"]);
   });
 
-  it("never allows jumping from queued straight to delivered or acknowledged", () => {
-    expect(canTransition("queued", "delivered")).toBe(false);
-    expect(canTransition("queued", "acknowledged")).toBe(false);
-    expect(() => applyStatus(base, "acknowledged", "t1")).toThrow(InvalidTransitionError);
+  // Phase 1 E5 (approved rule change): the in-app alert exists before "sent" is recorded, so a
+  // recipient may legitimately respond while the response is still "queued".
+  it("lets the recipient act on a still-queued alert (acting proves delivery)", () => {
+    expect(canTransition("queued", "delivered")).toBe(true);
+    expect(canTransition("queued", "acknowledged")).toBe(true);
+    expect(canTransition("queued", "declined")).toBe(true);
+    const ack = applyStatus(base, "acknowledged", "t1");
+    expect(ack.history.map((h) => h.status)).toEqual(["queued", "acknowledged"]);
+  });
+
+  it("never moves a recipient's answer backwards", () => {
+    for (const done of ["delivered", "acknowledged", "declined"] as const) {
+      expect(canTransition(done, "sent"), done).toBe(false);
+      expect(canTransition(done, "queued"), done).toBe(false);
+    }
+    expect(canTransition("acknowledged", "declined")).toBe(false);
+    expect(() => applyStatus(applyStatus(base, "acknowledged", "t1"), "sent", "t2")).toThrow(InvalidTransitionError);
   });
 
   it("does not allow reverting an acknowledgement", () => {

@@ -4,6 +4,7 @@ import { assertServerConfigured, serverEnv } from "@/server/env";
 import { errorResponse } from "@/server/http";
 import { applyAccessExpiry, applyRetention, runAllEscalations } from "@/server/services/emergencies";
 import { processAllJourneys } from "@/server/services/journeys";
+import { resumePendingDeletions } from "@/server/services/users";
 
 /**
  * Scheduled safety sweep: escalations, journey check-ins, retention, and the
@@ -19,8 +20,10 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: { code: "unauthorized", message: "Invalid cron secret" } }, { status: 401 });
     }
     assertServerConfigured();
-    const [escalations, journeys, retention, accessExpiry] = await Promise.all([runAllEscalations(), processAllJourneys(), applyRetention(), applyAccessExpiry()]);
-    return NextResponse.json({ escalations, journeys, retention, accessExpiry, at: new Date().toISOString() });
+    const [escalations, journeys, retention, accessExpiry, deletions] = await Promise.all([
+      runAllEscalations(), processAllJourneys(), applyRetention(), applyAccessExpiry(), resumePendingDeletions(),
+    ]);
+    return NextResponse.json({ escalations, journeys, retention, accessExpiry, deletions, at: new Date().toISOString() });
   } catch (err) {
     return errorResponse(err);
   }

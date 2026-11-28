@@ -10,12 +10,18 @@ export function isSessionLive(s: Pick<LocationSession, "status" | "expiresAt">, 
 /**
  * Whether `viewerUserId` may see the owner's live location through this session.
  * Access requires: the viewer is the linked contact account, and the session is live.
+ *
+ * `linkActive` (E5.1, defense in depth): whether the viewer's trusted-contact link is still
+ * ACCEPTED. When the caller knows it is not (blocked, removed, left), access is denied even if
+ * a session was left active by a race. Omitting it keeps the session-only check.
  */
 export function canViewLocation(
   s: Pick<LocationSession, "status" | "expiresAt" | "contactUserId">,
   viewerUserId: string,
   now: Date,
+  opts: { linkActive?: boolean } = {},
 ): boolean {
+  if (opts.linkActive === false) return false;
   return s.contactUserId === viewerUserId && isSessionLive(s, now);
 }
 

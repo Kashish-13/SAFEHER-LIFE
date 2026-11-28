@@ -74,6 +74,11 @@ export interface UserProfile {
   /** Incremented by "sign out everywhere"; demo session tokens carry it and are rejected once stale. */
   tokenVersion: number;
   disabled: boolean;
+  /**
+   * Set when account deletion starts (Phase 1 E5). From then on the account is treated as
+   * disabled; if deletion is interrupted, the cron job finishes it. Absent on normal accounts.
+   */
+  deletionPendingAt?: ISODate | null;
   createdAt: ISODate;
   updatedAt: ISODate;
 }
@@ -151,6 +156,12 @@ export interface EmergencyEvent {
   authorizedViewerIds: string[];
   /** Set when the event closes (resolved/cancelled) to close time + 24 h. After it, contacts lose access. */
   viewerAccessExpiresAt: ISODate | null;
+  /**
+   * True from closure until the expiry sweep has removed every viewer (Phase 1 E5). Lets the
+   * sweep find only events still needing work. Absent on older events (the API time check
+   * still blocks access to those).
+   */
+  viewerAccessOpen?: boolean;
   note: string | null;
   createdAt: ISODate;
   updatedAt: ISODate;
@@ -174,6 +185,19 @@ export interface StatusChange {
   detail?: string;
 }
 
+/**
+ * `activeEmergencies/{userId}`: per-user SOS lock (Phase 1 E5). Created in the same transaction
+ * as the emergency, removed in the same transaction that closes it, so two SOS presses can never
+ * create two active emergencies. Server-only (denied to clients by the default rule).
+ * A lock pointing at an event that is missing or no longer active is stale and is replaced.
+ */
+export interface ActiveEmergencyLock {
+  id: string; // = userId
+  userId: string;
+  eventId: string;
+  createdAt: ISODate;
+}
+
 export interface EmergencyResponse {
   id: string;
   eventId: string;
@@ -186,6 +210,14 @@ export interface EmergencyResponse {
   status: ResponseStatus;
   history: StatusChange[];
   failureReason: string | null;
+  /**
+   * E5.1: short lease taken (in a transaction) by the request that is sending this still-queued
+   * alert, so concurrent duplicate SOS requests can't send it twice. Expires on its own, so an
+   * alert whose sender crashed is retried by the next duplicate SOS request.
+   */
+  dispatchLeaseUntil?: ISODate | null;
+  /** E5.1: how many send attempts were started for this alert. */
+  dispatchAttempts?: number;
   createdAt: ISODate;
   updatedAt: ISODate;
 }

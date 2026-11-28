@@ -63,6 +63,8 @@ export async function authenticate(req: Request): Promise<AuthContext | null> {
   const store = getStore();
   let profile = await store.get<UserProfile>(COLLECTIONS.users, uid);
   if (profile?.disabled) throw forbidden("This account has been disabled. Contact support.");
+  // Deletion in progress (or interrupted and awaiting the cron job): nothing may act as this user.
+  if (profile?.deletionPendingAt) throw forbidden("This account is being deleted.");
   // Demo "sign out everywhere": tokens issued before the bump are rejected.
   if (profile && demoTokenVersion !== null && demoTokenVersion !== (profile.tokenVersion ?? 0)) return null;
   // Keep the stored verified-email flag in sync with the identity provider.

@@ -43,9 +43,12 @@ same rules ([`validate.ts`](../src/server/store/validate.ts)) and throw only `St
 | voiceSos | `{enabled, phrase (≥2 words, ≤40), sensitivity 0–1, falseActivationWindowSeconds 3–30}` | |
 | privacy | `{allowHelperRequests, historyRetentionDays 0–3650}` | |
 | fcmTokens | string[] (≤10) | |
+| deletionPendingAt | ISO \| absent | Set when deletion starts. The account then gets 403 everywhere; an interrupted deletion is finished by the cron sweep |
 | createdAt, updatedAt | ISO | |
 
-Access: read own. Retention: until account deletion (`DELETE /api/me` removes all owned data).
+Access: read own. Retention: until account deletion (`DELETE /api/me` removes all owned data). Deletion is resumable:
+detach links → stop shares → leave other people's emergencies → clear response references → delete owned data (atomic
+batches ≤ 500) → delete the sign-in account → delete this record **last**.
 
 ### `trustedContacts/{id}`
 | Field | Notes |
@@ -71,22 +74,37 @@ Indexes: single-field (`contactUserId`, `inviteTokenHash`, `claim.userId`), comp
 |---|---|
 | userId, userName | |
 | trigger | `manual` · `voice` (native) · `voice_simulated` · `journey_missed_checkin` (server-only) |
-| status | `active → cancelled / resolved` (owner only). One active per user |
+| status | `active → cancelled / resolved` (owner only). One active per user, enforced by the `activeEmergencies/{userId}` lock. Outside demo mode a `voice_simulated` test is stored already `cancelled` and never blocks a real SOS |
 | location | `GeoPoint \| null`. Only if `shareLocationOnSOS` |
 | escalationLevel, escalationConfig | snapshot of the user's config at trigger time |
 | isSimulated | true in demo mode / simulated triggers. No push sent |
 | authorizedViewerIds | user ids of contacts actually alerted. Removed immediately on block/remove/leave, and by the sweep after the 24 h window |
 | viewerAccessExpiresAt | close time (resolved **or** cancelled) + 24 h; `null` while active |
+| viewerAccessOpen | `true` from closure until the expiry sweep has removed the viewers; absent on pre-E5 events (still blocked by the API time check) |
 | note, createdAt, updatedAt, cancelledAt, resolvedAt | |
 
 Access (API, `core/permissions.emergencyAccess`): owner always; a contact only if in `authorizedViewerIds`, link still
 `accepted`, and event active or `now < viewerAccessExpiresAt`. Client SDK reads: **owner only** (rules). Admins see a redacted projection only.
-Indexes: `(userId, status)`, `(userId, createdAt desc)`, `(userId, createdAt asc)`, `(userId, authorizedViewerIds array-contains)`.
+Indexes: `(userId, status)`, `(userId, createdAt desc)`, `(userId, createdAt asc)`, `(userId, authorizedViewerIds array-contains)`,
+`(viewerAccessOpen, viewerAccessExpiresAt)` (E5.1, for the expired-access sweep).
+**Deployment required:** `firestore.indexes.json` is not deployed anywhere yet. Before a real Firebase project serves traffic,
+deploy it (`firebase deploy --only firestore:indexes`) and wait for the indexes to finish building; the emulator does not
+enforce indexes. `tests/server/e51-indexes.test.ts` fails if a query run by the services lacks a composite index.
 Retention: closed events older than `privacy.historyRetentionDays` deleted by the cron sweep. Active events are never deleted.
 
+### `activeEmergencies/{userId}` (server-only)
+Per-user SOS lock: `{id = userId, userId, eventId, createdAt}`. Written in the same transaction as the emergency and its
+first-tier responses; deleted in the same transaction that closes it. A lock pointing at a missing or closed event is
+stale and is replaced. Clients can't read it (default-deny rule). Deleted with the account.
+
 ### `emergencyResponses/{eventId__contactId}`
-Per-contact alert record. Deterministic id prevents duplicate alerts.
-`eventId, ownerId, contactId, contactUserId, contactName, tier, channels[], status, history[{status, at, detail}], failureReason`.
+Per-contact alert record. Deterministic id prevents duplicate alerts. Status only moves forward; a recipient may act on a
+still-`queued` alert (opening or answering it proves delivery), and the dispatcher never overwrites their answer.
+`eventId, ownerId, contactId, contactUserId, contactName, tier, channels[], status, history[{status, at, detail}], failureReason`,
+optional `dispatchLeaseUntil`, `dispatchAttempts` (E5.1). Sending happens only after the SOS transaction commits; each
+recipient independently. An alert that fails stays `queued` and is retried by the next duplicate SOS request; a 30-second
+lease (taken in a transaction) stops concurrent requests sending it twice, and the in-app alert id is fixed per response
+(`ntf_alert_<responseId>`), so a retry can't duplicate it. Delivery is never guaranteed.
 Status transitions enforced by `src/core/notification-status.ts` (forward-only).
 Access: client read `ownerId == uid` only (contacts via API). Indexes: `(eventId, contactUserId)`, `(contactUserId, createdAt)`. Retention: deleted with the event.
 

@@ -21,7 +21,13 @@
 | Data rights | Account deletion removes all owned data and detaches links; retention sweep deletes old closed emergencies |
 | Secrets | Only `NEXT_PUBLIC_*` (non-secret) values reach the browser; Admin key server-only; `.env*` git-ignored |
 | Honest UX | Delivery states only after system confirmation; simulated data labelled; no claims of police integration or guaranteed delivery |
-| Testing safety | Simulated triggers never alert real contacts (dry run outside demo mode); push is never sent for simulated events |
+| Testing safety | Simulated triggers never alert real contacts (outside demo mode a voice test is recorded already closed, alerts nobody and can never block a real SOS); push is never sent for simulated events |
+| Concurrency (E5) | Invitation claims, owner approval, block/remove/leave, location sharing, SOS creation, escalation and closing run in store transactions (reads before writes, retried on conflict): one claimant per link; a concurrent approval can't restore a blocked/removed relationship; two SOS presses create one event and one set of alerts; secondary contacts are alerted once. Notifications, alerts and audit entries are written only **after** a successful commit. If an SOS can't be recorded safely the user is told to call 112 |
+| URL ids | Path parameters the store would reject (e.g. containing `/`) get a generic 404 before any service runs |
+| Location sharing (E5.1) | Pause/resume/stop run in a transaction; resume requires the contact link to still be `accepted`; publishing writes only to sessions still active; viewers whose link is no longer accepted see nothing, even if a race left a session active |
+| SOS alert reliability (E5.1) | A saved SOS is never reported as failed because an alert failed afterwards; failed alerts stay `queued` and are retried (leased, idempotent) by the next SOS press. Delivery is not guaranteed; the UI keeps "call 112" |
+| No existence probing (E6) | Acting on someone else's circle, contact, location share, journey or notification returns the same 404 as an id that doesn't exist. Emergencies keep 403 for non-viewers (an alerted contact must be able to tell "no longer allowed" from "gone") |
+| Rules verified (E6) | `firestore.rules` is exercised by 102 emulator tests (`npm run test:rules`) for owner, other user, contact, blocked contact, expired viewer, signed-out and admin-claim callers; see [TESTING.md](TESTING.md) |
 
 ## Known limitations / production hardening
 
@@ -30,13 +36,18 @@
 3. **Escalation is NOT yet reliable unattended.** On Vercel Hobby the cron runs once a day; the owner's open emergency
    screen drives escalation every 5 s. A server-side scheduler (QStash per-event callbacks + Cloudflare per-minute
    backstop) is planned for Phase 2 and must pass an all-browsers-closed test before any reliability claim.
-7. **Email verification UI** (send/resend verification email) arrives with Firebase in Phase 1. Until then, in Firebase
-   mode only Google accounts (verified by Google) or accounts with a verified phone can claim invitations.
-8. Demo session tokens are kept in `localStorage` (demo only; Firebase mode uses the Firebase SDK's storage).
-4. **SMS/email alert providers are not integrated.** Contacts without a SafeHer account are reported as `failed` with the
+4. **Queued alerts are retried only by another SOS press** (or the owner's open emergency screen); there is no
+   background retry yet. That arrives with the Phase 2 scheduler.
+5. **SMS/email alert providers are not integrated.** Contacts without a SafeHer account are reported as `failed` with the
    reason. Integrate e.g. Twilio/MSG91 in `dispatcher.ts` and record provider delivery receipts as `delivered`.
-5. Add Firebase App Check to protect the API from non-app clients, and a CSP once script sources are finalised.
-6. Configure Firestore TTL policies for `notifications` and `auditLogs`.
+6. **Web push isn't registered in the browser** (no service worker yet); server-side sending exists but has no tokens.
+7. **Email verification UI** (send/resend verification email) is not built. Until it is, in Firebase mode only Google
+   accounts (verified by Google) or accounts with a verified phone can claim invitations.
+8. Add Firebase App Check to protect the API from non-app clients, and a CSP once script sources are finalised.
+9. Configure Firestore TTL policies for `notifications` and `auditLogs`.
+10. `storage.rules` is untested and Storage isn't configured (nothing uses it until the evidence vault exists).
+11. Demo session tokens are kept in `localStorage` (demo only; Firebase mode uses the Firebase SDK's storage).
+12. Firestore read budgets / per-user read limits are not enforced yet (planned E8).
 
 ## Reporting a vulnerability
 Please email the maintainers privately rather than opening a public issue.

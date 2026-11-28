@@ -1,13 +1,14 @@
 import type { EmergencyCircle, TrustedContact } from "@/core/types";
 import { audit } from "../audit";
-import { badRequest, forbidden, notFound } from "../errors";
+import { badRequest, notFound } from "../errors";
 import { newId, nowISO } from "../ids";
 import { getStore } from "../store";
 import { COLLECTIONS, where } from "../store/types";
 
 export async function listCircles(ownerId: string): Promise<EmergencyCircle[]> {
   const circles = await getStore().query<EmergencyCircle>(COLLECTIONS.emergencyCircles, { where: [where("ownerId", "==", ownerId)] });
-  return circles.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  // Oldest first; the id breaks ties so both stores give the same order.
+  return circles.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
 }
 
 /** Ensures every contact id belongs to the owner (prevents cross-user references). */
@@ -31,8 +32,8 @@ export async function createCircle(ownerId: string, input: { name: string; descr
 
 async function getOwned(ownerId: string, id: string) {
   const c = await getStore().get<EmergencyCircle>(COLLECTIONS.emergencyCircles, id);
-  if (!c) throw notFound("Circle not found");
-  if (c.ownerId !== ownerId) throw forbidden();
+  // Someone else's circle answers exactly like a missing one (no existence disclosure).
+  if (!c || c.ownerId !== ownerId) throw notFound("Circle not found");
   return c;
 }
 
